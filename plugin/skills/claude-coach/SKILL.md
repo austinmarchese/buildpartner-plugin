@@ -111,7 +111,7 @@ From session history, identify:
 ```
 ## Coach Review
 
-**Activity**: {X sessions, Y tokens, main focus: Z}
+**Activity**: {current streak, main focus: Z}
 
 ### What's working
 - {1-2 things they're doing well}
@@ -131,7 +131,7 @@ From session history, identify:
 ## Deep Dive Results
 
 **Environment Score**: {X}/10
-Based on {Y} sessions analyzed across {Z} projects.
+Based on recent sessions across {Y} projects.
 
 ### Critical (fix now)
 1. {Finding}: {what's wrong and why it matters}
