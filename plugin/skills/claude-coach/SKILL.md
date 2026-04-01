@@ -13,6 +13,7 @@ Your Claude Code coach. Reviews your setup, analyzes your habits, and gives you 
 - "Fix" actions should be specific enough to copy-paste or act on immediately.
 - If a fix is something you can do right now (edit CLAUDE.md, create a skill), offer to do it.
 - Always include "What's Working Well" so it doesn't feel like a list of failures.
+- Never mention raw session counts or token totals. These numbers fluctuate during background sync and confuse users. Use streak, relative terms ("your recent sessions"), or project names instead.
 
 ## Instructions
 
