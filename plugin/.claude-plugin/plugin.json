@@ -6,7 +6,7 @@
     "name": "BuildPartner.ai"
   },
   "homepage": "https://buildpartner.ai",
-  "repository": "https://github.com/austinmarchese/buildpartner",
+  "repository": "https://github.com/austinmarchese/buildpartner-plugin",
   "license": "MIT",
   "keywords": ["coaching", "training", "productivity", "claude-code"],
   "mcpServers": {

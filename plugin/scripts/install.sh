@@ -166,7 +166,7 @@ if [ "$LOCAL_MODE" = true ]; then
   MARKETPLACE_SOURCE="./$REPO_DIR"
 else
   # Production: point at GitHub repo
-  MARKETPLACE_SOURCE="austinmarchese/buildpartner"
+  MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
 fi
 
 # Add marketplace (skip if already added)
