@@ -28,10 +28,14 @@ PLUGIN_NAME="buildpartner"
 
 # Parse flags
 LOCAL_MODE=false
-for arg in "$@"; do
-  case "$arg" in
+PROVIDED_TOKEN=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --local) LOCAL_MODE=true ;;
+    --token=*) PROVIDED_TOKEN="${1#--token=}" ;;
+    --token) PROVIDED_TOKEN="$2"; shift ;;
   esac
+  shift
 done
 
 echo ""
@@ -60,7 +64,35 @@ echo ""
 echo -e "${BOLD}  [1/3] Create your account${RESET}"
 echo ""
 
-if [ -f "$AUTH_FILE" ]; then
+# If --token provided, verify and use it (skips email prompt entirely)
+if [ -n "$PROVIDED_TOKEN" ]; then
+  VERIFY_DATA=$(curl -s -H "Authorization: Bearer $PROVIDED_TOKEN" "$API_BASE/api/buildpartner/verify-token" 2>/dev/null)
+  VERIFY_EMAIL=$(echo "$VERIFY_DATA" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.email)console.log(d.email)}catch{}" 2>/dev/null)
+  VERIFY_USER=$(echo "$VERIFY_DATA" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.username)console.log(d.username)}catch{}" 2>/dev/null)
+
+  if [ -n "$VERIFY_EMAIL" ]; then
+    TOKEN="$PROVIDED_TOKEN"
+    EMAIL="$VERIFY_EMAIL"
+    USERNAME="$VERIFY_USER"
+    mkdir -p "$BP_DIR"
+    cat > "$AUTH_FILE" << AUTHEOF
+{
+  "email": "$EMAIL",
+  "username": "$USERNAME",
+  "token": "$TOKEN",
+  "profile_url": "buildpartner.ai/$USERNAME",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+}
+AUTHEOF
+    echo -e "  ${GREEN}✓ Logged in as $EMAIL${RESET}"
+    SKIP_SIGNUP=true
+  else
+    echo -e "  ${YELLOW}! Invalid token. Falling back to email signup.${RESET}"
+    echo ""
+  fi
+fi
+
+if [ -f "$AUTH_FILE" ] && [ "${SKIP_SIGNUP}" != "true" ]; then
   TOKEN=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('$AUTH_FILE','utf-8')).token)}catch{}" 2>/dev/null)
   if [ -n "$TOKEN" ]; then
     VERIFY=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "$API_BASE/api/buildpartner/verify-token" 2>/dev/null || echo "000")
