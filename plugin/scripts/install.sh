@@ -235,7 +235,7 @@ echo ""
 
 # Open dashboard
 if [ -n "$TOKEN" ]; then
-  DASH_URL="https://buildpartner.ai/dashboard?t=$TOKEN"
+  DASH_URL="https://buildpartner.ai/dashboard?t=$TOKEN&installed=true"
   if command -v open &> /dev/null; then
     open "$DASH_URL" 2>/dev/null && echo -e "  ${GREEN}✓ Opening your dashboard...${RESET}" || true
   elif command -v xdg-open &> /dev/null; then
