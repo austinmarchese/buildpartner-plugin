@@ -1,6 +1,6 @@
 {
   "name": "buildpartner",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -8,11 +8,20 @@
   "homepage": "https://buildpartner.ai",
   "repository": "https://github.com/austinmarchese/buildpartner-plugin",
   "license": "MIT",
-  "keywords": ["coaching", "training", "productivity", "claude-code"],
+  "keywords": [
+    "coaching",
+    "training",
+    "productivity",
+    "claude-code"
+  ],
   "mcpServers": {
     "tools": {
       "command": "npx",
-      "args": ["-y", "buildpartner", "serve"]
+      "args": [
+        "-y",
+        "buildpartner",
+        "serve"
+      ]
     }
   },
   "hooks": {

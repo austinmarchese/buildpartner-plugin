@@ -41,6 +41,7 @@ Analyze from the session data and context returned by `get_personal_context`:
 - **Skill usage**: Which BuildPartner skills have they tried? What haven't they touched?
 - **Workflow signals**: Do they use Plan mode? Agents? Hooks? Parallel sessions?
 - **Recent prompts**: What are they asking Claude to do? Any repeated patterns that could be automated?
+- **Project fit**: Does the project have structure that helps Claude understand context (knowledge folders, skills, docs)? Are there repeated prompts that should become project-specific skills? Could they benefit from organizing completed work as reference material?
 
 Output exactly 3 action items, ranked by impact.
 
@@ -88,12 +89,31 @@ Check:
 - Is the BuildPartner tracking hook installed?
 - Could they benefit from pre/post hooks?
 
-#### Layer 5: Knowledge and Context
+#### Layer 5: Project Structure and Knowledge
 
-Check for knowledge folders:
-- `~/.buildpartner/knowledge/experiences/` - do they have logged experiences?
-- Project-level `knowledge/`, `context/`, `docs/` folders
-- `.claude/` project configuration
+Analyze the current project to understand what it's for, then check whether the project is set up to make Claude effective.
+
+**Step 1: Classify the project.** Read the folder structure, CLAUDE.md, README, and key files to determine the project type:
+- **Code/app** (package.json, src/, build configs)
+- **Content/creative** (drafts, scripts, assets, writing)
+- **Knowledge/operations** (docs, processes, playbooks, reports)
+- **Personal OS** (knowledge/, skills/, projects/ already present)
+
+**Step 2: Check for project-specific structure.** Based on the project type, look for and flag what's missing:
+
+| What to check | Why it matters |
+|---------------|---------------|
+| `.claude/skills/` folder | Repeated workflows in session history should become skills. Suggest specific ones based on the project type (e.g., content projects need writing/editing skills, code projects need review/deploy skills). |
+| `knowledge/` or equivalent context folder | AI performs better with persistent context. Content projects benefit from `knowledge/me/voice.md`, `knowledge/me/audience.md`. Code projects benefit from architecture docs, API references. |
+| Project-specific skills vs. generic skills | If they have skills, do they match what this project actually does? Flag mismatches. |
+| Finished work organization | Is completed work organized where AI can reference it? Suggest a `done/` or `archive/` pattern so past work becomes training data for future work. |
+
+**Step 3: Recommend skills to create** based on the project type and their session patterns:
+- Content projects: `/weekly-review`, `/daily-journal`, `/draft-to-final`, `/define-audience`
+- Code projects: `/create-pr-description`, `/pre-deploy-check`, `/document-decision`
+- Knowledge projects: `/capture-learning`, `/organize-notes`, `/create-report`
+
+Frame recommendations around the idea: the more context and structure you give Claude in this project, the less you have to repeat yourself.
 
 #### Layer 6: Workflow Patterns
 
@@ -246,7 +266,28 @@ Ask ONE question:
 
 Wait for their answer. This shapes everything that follows.
 
-### Step 3: Claude Code walkthrough
+### Step 3: Project structure check
+
+Before diving into features, look at the project they're currently in:
+
+1. Read the folder structure, CLAUDE.md, README, and key files.
+2. Based on their stated goal + what the project contains, suggest organizational improvements that will make Claude more effective here.
+
+**If the project is new or minimal:**
+> "Let me suggest a structure that'll make Claude way more useful in this project."
+
+Based on the project type, recommend:
+- `knowledge/` folder with relevant subfolders (e.g., `knowledge/me/voice.md` for content work, `knowledge/architecture/` for code projects)
+- `.claude/skills/` with 1-2 starter skills that match their goal
+- `projects/` folder if they'll manage multiple workstreams
+
+**If the project already has structure:**
+- Acknowledge what's there
+- Suggest gaps (e.g., "You have skills but no knowledge folder, so Claude starts from scratch on context every session")
+
+Keep this brief. Offer to set up whatever they want right now.
+
+### Step 4: Claude Code walkthrough
 
 Based on their goal, walk them through the capabilities that matter most to them. Keep it practical, not a feature dump. Cover:
 
@@ -263,7 +304,7 @@ Based on their goal, walk them through the capabilities that matter most to them
 
 Keep each section to 2-3 sentences max. Don't overwhelm.
 
-### Step 4: How BuildPartner.ai helps
+### Step 5: How BuildPartner.ai helps
 
 Explain concisely:
 
@@ -276,7 +317,7 @@ Explain concisely:
 >
 > "Start with `/buildpartner:interview-me` to build your profile, then come back to me after a few more sessions. I'll have real data to work with."
 
-### Step 5: Quick config check
+### Step 6: Quick config check
 
 Even without session data, check their config files:
 - Do they have a CLAUDE.md? If not, offer to create one based on their stated goal.
@@ -285,7 +326,7 @@ Even without session data, check their config files:
 
 If you can fix something right now (create a CLAUDE.md, suggest an MCP server), offer to do it.
 
-### Step 6: Save and suggest next step
+### Step 7: Save and suggest next step
 
 Save onboarding state:
 
