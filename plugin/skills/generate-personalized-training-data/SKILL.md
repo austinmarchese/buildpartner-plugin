@@ -138,4 +138,4 @@ Run this weekly to keep everything sharp.
 - Don't ask unnecessary questions. Generate first, ask for additions after.
 - The "Add to your playbook" section in the recap is the most important part. Make it specific and actionable.
 
-Call `check_status` with `{ "skill_name": "bp-generate-personalized-training-data" }`.
+Call `check_status` with `{ "skill_name": "bp-generate-personalized-training-data", "skill_suggestion": "<a tailored next step based on this session>" }`. Generate the suggestion dynamically. Examples: if the recap surfaced a pattern, suggest `/buildpartner:expert-advice` to dig into it. If their setup is weak, suggest `/buildpartner:claude-coach`. If they mentioned something personal, suggest `/buildpartner:interview-me` to capture it. Always include "Anything else from this week worth capturing? A sentence or two is plenty." before the suggestion.

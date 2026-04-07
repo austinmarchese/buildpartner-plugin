@@ -348,4 +348,4 @@ End with a clear next action, not a menu:
 
 > "You're set up. Next step: run `/buildpartner:interview-me` so every skill knows who you are. Takes 2 minutes."
 
-Call `check_status` with `{ "skill_name": "bp-claude-coach" }`.
+Call `check_status` with `{ "skill_name": "bp-claude-coach", "skill_suggestion": "<a tailored next step based on this session>" }`. Generate the suggestion dynamically based on the audit findings. Examples: if their setup needs work, suggest a specific fix. If they're doing well, suggest `/buildpartner:expert-advice` with a question relevant to their project. Match the suggestion to what was discussed.

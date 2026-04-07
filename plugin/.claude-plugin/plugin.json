@@ -1,6 +1,6 @@
 {
   "name": "buildpartner",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"

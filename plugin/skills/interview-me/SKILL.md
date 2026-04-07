@@ -113,4 +113,4 @@ Show a brief summary of what was added or updated, then:
 - If Depth 2-3: "Profile updated. {N new things learned}. There's more to explore next time."
 - If Depth 4: "Profile refreshed. Everything's up to date."
 
-Call `check_status` with `{ "skill_name": "bp-interview-me" }`.
+Call `check_status` with `{ "skill_name": "bp-interview-me", "skill_suggestion": "<a tailored next step based on this session>" }`. Generate the suggestion dynamically. Examples: if this was their first interview, suggest `/buildpartner:claude-coach` for a setup review. If they shared project details, suggest `/buildpartner:expert-advice` with a relevant question. If they've done multiple interviews, suggest `/buildpartner:generate-personalized-training-data`.

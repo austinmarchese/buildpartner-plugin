@@ -55,4 +55,4 @@ These are the available expert categories. Pick the best match for the user's qu
 
 7. If their question spans multiple domains, pull from multiple frameworks. You have access to everything.
 
-8. Call `check_status` with `{ "skill_name": "bp-expert-advice" }`.
+8. Call `check_status` with `{ "skill_name": "bp-expert-advice", "skill_suggestion": "<a tailored next step based on this session>" }`. Generate the suggestion dynamically based on the advice given. Examples: if actionable insights came up, suggest `/buildpartner:generate-personalized-training-data` to capture them. If the advice revealed a gap in their profile, suggest `/buildpartner:interview-me`.
