@@ -23,7 +23,7 @@ RESET='\033[0m'
 BP_DIR="$HOME/.buildpartner"
 AUTH_FILE="$BP_DIR/auth.json"
 API_BASE="https://www.buildpartner.ai"
-MARKETPLACE_NAME="buildpartner-marketplace"
+MARKETPLACE_NAME="buildpartner"
 PLUGIN_NAME="buildpartner"
 
 # Parse flags
@@ -220,6 +220,27 @@ fi
 echo -e "  ${GREEN}✓ 5 skills available${RESET}"
 echo -e "  ${GREEN}✓ MCP server configured${RESET}"
 echo -e "  ${GREEN}✓ Auto-tracking enabled${RESET}"
+
+# ── Inject CLAUDE.md instructions ──────────────────────────────
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+BP_START="<!-- buildpartner-start -->"
+BP_END="<!-- buildpartner-end -->"
+
+BP_BLOCK="$BP_START
+## BuildPartner.ai
+
+When I ask for coaching, a setup review, or help improving my Claude Code workflow, use /buildpartner:claude-coach.
+When I ask a strategic question about pricing, marketing, content, launch, sales, or product, use /buildpartner:expert-advice.
+At the end of a productive week, suggest running /buildpartner:generate-personalized-training-data to capture what was built.
+$BP_END"
+
+if [ -f "$CLAUDE_MD" ] && grep -q "$BP_START" "$CLAUDE_MD"; then
+  sed -i.bak "/$BP_START/,/$BP_END/d" "$CLAUDE_MD" && rm -f "$CLAUDE_MD.bak"
+fi
+mkdir -p "$(dirname "$CLAUDE_MD")"
+echo "" >> "$CLAUDE_MD"
+echo "$BP_BLOCK" >> "$CLAUDE_MD"
+echo -e "  ${GREEN}✓ Claude Code integration configured${RESET}"
 
 echo ""
 
