@@ -23,7 +23,6 @@ RESET='\033[0m'
 BP_DIR="$HOME/.buildpartner"
 AUTH_FILE="$BP_DIR/auth.json"
 API_BASE="${BP_API_BASE:-https://www.buildpartner.ai}"
-API_DOMAIN=$(echo "$API_BASE" | sed 's|https\?://||; s|/$||')
 MARKETPLACE_NAME="buildpartner"
 PLUGIN_NAME="buildpartner"
 
@@ -35,6 +34,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --local) LOCAL_MODE=true ;;
     --debug) DEBUG=true ;;
+    --api=*) API_BASE="${1#--api=}" ;;
+    --api) API_BASE="$2"; shift ;;
     --token=*) PROVIDED_TOKEN="${1#--token=}" ;;
     --token) PROVIDED_TOKEN="$2"; shift ;;
   esac
@@ -47,6 +48,7 @@ debug() {
   fi
 }
 
+API_DOMAIN=$(echo "$API_BASE" | sed 's|https\?://||; s|/$||')
 debug "API_BASE=$API_BASE"
 debug "API_DOMAIN=$API_DOMAIN"
 debug "LOCAL_MODE=$LOCAL_MODE"
