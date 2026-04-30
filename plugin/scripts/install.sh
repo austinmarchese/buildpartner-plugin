@@ -209,15 +209,18 @@ fi
 if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
   claude plugin marketplace remove "$MARKETPLACE_NAME" 2>/dev/null || true
 fi
-claude plugin marketplace add "$MARKETPLACE_SOURCE" 2>/dev/null
+claude plugin marketplace add "$MARKETPLACE_SOURCE"
 echo -e "  ${GREEN}✓ Marketplace added${RESET}"
 
 # Install plugin (remove and reinstall to ensure latest version)
 if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
   claude plugin uninstall "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null || true
 fi
-  claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null
+if claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
   echo -e "  ${GREEN}✓ Plugin installed${RESET}"
+else
+  echo -e "  ${YELLOW}✗ Failed to install plugin${RESET}"
+  exit 1
 fi
 
 echo -e "  ${GREEN}✓ 3 skills available${RESET}"
