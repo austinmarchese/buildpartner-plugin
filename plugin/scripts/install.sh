@@ -197,23 +197,25 @@ if [ "$LOCAL_MODE" = true ]; then
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
   MARKETPLACE_SOURCE="./$REPO_DIR"
+elif echo "$API_BASE" | grep -q "dev\."; then
+  # Dev: point at dev branch of GitHub repo
+  MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin#dev"
 else
   # Production: point at GitHub repo
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
 fi
 
-# Add marketplace (skip if already added)
+# Add marketplace (remove and re-add to ensure correct branch)
 if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
-  echo -e "  ${GREEN}✓ Marketplace already added${RESET}"
-else
-  claude plugin marketplace add "$MARKETPLACE_SOURCE" 2>/dev/null
-  echo -e "  ${GREEN}✓ Marketplace added${RESET}"
+  claude plugin marketplace remove "$MARKETPLACE_NAME" 2>/dev/null || true
 fi
+claude plugin marketplace add "$MARKETPLACE_SOURCE" 2>/dev/null
+echo -e "  ${GREEN}✓ Marketplace added${RESET}"
 
-# Install plugin (skip if already installed)
+# Install plugin (remove and reinstall to ensure latest version)
 if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
-  echo -e "  ${GREEN}✓ Plugin already installed${RESET}"
-else
+  claude plugin uninstall "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null || true
+fi
   claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null
   echo -e "  ${GREEN}✓ Plugin installed${RESET}"
 fi
