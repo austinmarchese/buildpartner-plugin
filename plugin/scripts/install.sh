@@ -316,10 +316,10 @@ echo ""
 echo -e "  ${ORANGE}/bp:expert-advice${RESET}"
 echo ""
 
-# If we're already inside a terminal, try to launch claude directly
-if [ -t 1 ] && command -v claude &> /dev/null; then
+# If we're in an interactive terminal (not piped from curl), offer to launch claude
+if [ -t 0 ] && command -v claude &> /dev/null; then
   printf "  Launch Claude Code now? [Y/n] "
-  read -r LAUNCH_REPLY
+  read -r LAUNCH_REPLY </dev/tty
   if [ -z "$LAUNCH_REPLY" ] || echo "$LAUNCH_REPLY" | grep -qi "^y"; then
     echo ""
     exec claude
