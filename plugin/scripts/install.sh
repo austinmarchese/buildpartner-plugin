@@ -30,14 +30,27 @@ PLUGIN_NAME="buildpartner"
 # Parse flags
 LOCAL_MODE=false
 PROVIDED_TOKEN=""
+DEBUG=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --local) LOCAL_MODE=true ;;
+    --debug) DEBUG=true ;;
     --token=*) PROVIDED_TOKEN="${1#--token=}" ;;
     --token) PROVIDED_TOKEN="$2"; shift ;;
   esac
   shift
 done
+
+debug() {
+  if [ "$DEBUG" = true ]; then
+    echo -e "  ${DIM}[debug] $1${RESET}"
+  fi
+}
+
+debug "API_BASE=$API_BASE"
+debug "API_DOMAIN=$API_DOMAIN"
+debug "LOCAL_MODE=$LOCAL_MODE"
+debug "TOKEN=${PROVIDED_TOKEN:+set (${#PROVIDED_TOKEN} chars)}"
 
 echo ""
 echo -e "${ORANGE}  ╭─────────────────────────────────────────╮${RESET}"
@@ -193,29 +206,48 @@ echo ""
 echo -e "${BOLD}  [2/3] Installing plugin...${RESET}"
 
 if [ "$LOCAL_MODE" = true ]; then
-  # Local: point at the repo directory on disk
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
   MARKETPLACE_SOURCE="./$REPO_DIR"
 elif echo "$API_BASE" | grep -q "dev\."; then
-  # Dev: point at dev branch of GitHub repo
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin#dev"
 else
-  # Production: point at GitHub repo
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
 fi
 
+debug "MARKETPLACE_SOURCE=$MARKETPLACE_SOURCE"
+debug "MARKETPLACE_NAME=$MARKETPLACE_NAME"
+debug "PLUGIN_NAME=$PLUGIN_NAME"
+
+# Current state
+debug "claude version: $(claude --version 2>&1 || echo 'not found')"
+debug "existing marketplaces: $(claude plugin marketplace list 2>&1 || echo 'none')"
+debug "existing plugins: $(claude plugin list 2>&1 || echo 'none')"
+
 # Add marketplace (remove and re-add to ensure correct branch)
 if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
+  debug "removing existing marketplace '$MARKETPLACE_NAME'..."
   claude plugin marketplace remove "$MARKETPLACE_NAME" 2>/dev/null || true
 fi
-claude plugin marketplace add "$MARKETPLACE_SOURCE"
-echo -e "  ${GREEN}✓ Marketplace added${RESET}"
+
+debug "adding marketplace: $MARKETPLACE_SOURCE"
+if claude plugin marketplace add "$MARKETPLACE_SOURCE"; then
+  echo -e "  ${GREEN}✓ Marketplace added${RESET}"
+else
+  echo -e "  ${YELLOW}✗ Failed to add marketplace${RESET}"
+  debug "marketplace add exit code: $?"
+  exit 1
+fi
+
+debug "marketplaces after add: $(claude plugin marketplace list 2>&1 || echo 'none')"
 
 # Install plugin (remove and reinstall to ensure latest version)
 if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
+  debug "removing existing plugin '$PLUGIN_NAME@$MARKETPLACE_NAME'..."
   claude plugin uninstall "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null || true
 fi
+
+debug "installing plugin: $PLUGIN_NAME@$MARKETPLACE_NAME"
 if claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
   echo -e "  ${GREEN}✓ Plugin installed${RESET}"
 else
