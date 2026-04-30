@@ -2,10 +2,10 @@
 # BuildPartner.ai Plugin Installer
 #
 # Production (from GitHub marketplace):
-#   curl -fsSL https://buildpartner.ai/install-plugin.sh | sh
+#   curl -fsSL https://buildpartner.ai/install.sh | sh
 #
 # Local dev (from local repo clone):
-#   curl -fsSL https://buildpartner.ai/install-plugin.sh | sh -s -- --local
+#   curl -fsSL https://buildpartner.ai/install.sh | sh -s -- --local
 #   OR: ./plugin/scripts/install.sh --local
 #
 # Installs the BuildPartner plugin into Claude Code via the marketplace system.
@@ -22,21 +22,44 @@ RESET='\033[0m'
 
 BP_DIR="$HOME/.buildpartner"
 AUTH_FILE="$BP_DIR/auth.json"
-API_BASE="https://www.buildpartner.ai"
+API_BASE="${BP_API_BASE:-https://www.buildpartner.ai}"
 MARKETPLACE_NAME="buildpartner"
 PLUGIN_NAME="buildpartner"
 
 # Parse flags
 LOCAL_MODE=false
 PROVIDED_TOKEN=""
+DEBUG=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --local) LOCAL_MODE=true ;;
+    --debug) DEBUG=true ;;
+    --api=*) API_BASE="${1#--api=}" ;;
+    --api) API_BASE="$2"; shift ;;
     --token=*) PROVIDED_TOKEN="${1#--token=}" ;;
     --token) PROVIDED_TOKEN="$2"; shift ;;
   esac
   shift
 done
+
+debug() {
+  if [ "$DEBUG" = true ]; then
+    echo -e "  ${DIM}[debug] $1${RESET}"
+  fi
+}
+
+API_DOMAIN=$(echo "$API_BASE" | sed 's|https\?://||; s|/$||')
+
+# Include api_base in auth.json when not production
+if echo "$API_BASE" | grep -q "www\.buildpartner\.ai"; then
+  AUTH_API_LINE=""
+else
+  AUTH_API_LINE="\"api_base\": \"$API_BASE\","
+fi
+debug "API_BASE=$API_BASE"
+debug "API_DOMAIN=$API_DOMAIN"
+debug "LOCAL_MODE=$LOCAL_MODE"
+debug "TOKEN=${PROVIDED_TOKEN:+set (${#PROVIDED_TOKEN} chars)}"
 
 echo ""
 echo -e "${ORANGE}  ╭─────────────────────────────────────────╮${RESET}"
@@ -80,7 +103,8 @@ if [ -n "$PROVIDED_TOKEN" ]; then
   "email": "$EMAIL",
   "username": "$USERNAME",
   "token": "$TOKEN",
-  "profile_url": "buildpartner.ai/$USERNAME",
+  $AUTH_API_LINE
+  "profile_url": "$API_DOMAIN/$USERNAME",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
@@ -138,7 +162,7 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
   "email": "$EMAIL",
   "username": "$USERNAME",
   "token": "$SIGNUP_TOKEN",
-  "profile_url": "buildpartner.ai/$USERNAME",
+  "profile_url": "$API_DOMAIN/$USERNAME",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
@@ -159,7 +183,7 @@ AUTHEOF
   "email": "$EMAIL",
   "username": "$USERNAME",
   "token": "$SIGNUP_TOKEN",
-  "profile_url": "buildpartner.ai/$USERNAME",
+  "profile_url": "$API_DOMAIN/$USERNAME",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
@@ -174,11 +198,10 @@ AUTHEOF
     fi
   elif echo "$SIGNUP_ERROR" | grep -qi "email"; then
     echo -e "  ${YELLOW}! This email is already registered.${RESET}"
-    echo -e "  ${DIM}  Log in at $API_BASE/dashboard/login, then run:${RESET}"
-    echo -e "  ${DIM}  buildpartner login <your-token>${RESET}"
+    echo -e "  ${DIM}  Sign in at your dashboard to continue: $API_BASE/dashboard/login${RESET}"
     exit 1
   elif echo "$SIGNUP_ERROR" | grep -qi "network"; then
-    echo -e "  ${YELLOW}! Could not reach buildpartner.ai. Check your connection and try again.${RESET}"
+    echo -e "  ${YELLOW}! Could not reach ${API_DOMAIN}. Check your connection and try again.${RESET}"
     exit 1
   else
     echo -e "  ${YELLOW}! Signup failed: $SIGNUP_ERROR${RESET}"
@@ -192,71 +215,86 @@ echo ""
 echo -e "${BOLD}  [2/3] Installing plugin...${RESET}"
 
 if [ "$LOCAL_MODE" = true ]; then
-  # Local: point at the repo directory on disk
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
   MARKETPLACE_SOURCE="./$REPO_DIR"
+elif echo "$API_BASE" | grep -q "dev\."; then
+  MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin#dev"
 else
-  # Production: point at GitHub repo
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
 fi
 
-# Add marketplace (skip if already added)
-if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
-  echo -e "  ${GREEN}✓ Marketplace already added${RESET}"
-else
-  claude plugin marketplace add "$MARKETPLACE_SOURCE" 2>/dev/null
+debug "MARKETPLACE_SOURCE=$MARKETPLACE_SOURCE"
+debug "MARKETPLACE_NAME=$MARKETPLACE_NAME"
+debug "PLUGIN_NAME=$PLUGIN_NAME"
+
+# Current state
+debug "claude version: $(claude --version 2>&1 || echo 'not found')"
+debug "existing marketplaces: $(claude plugin marketplace list 2>&1 || echo 'none')"
+debug "existing plugins: $(claude plugin list 2>&1 || echo 'none')"
+
+# Add marketplace (remove and re-add to ensure correct branch)
+# Try both possible names (old installs used 'buildpartner-marketplace')
+if claude plugin marketplace list 2>/dev/null | grep -q "buildpartner-marketplace"; then
+  debug "removing existing marketplace 'buildpartner-marketplace'..."
+  claude plugin marketplace remove "buildpartner-marketplace" 2>/dev/null || true
+elif claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
+  debug "removing existing marketplace '$MARKETPLACE_NAME'..."
+  claude plugin marketplace remove "$MARKETPLACE_NAME" 2>/dev/null || true
+fi
+
+debug "adding marketplace: $MARKETPLACE_SOURCE"
+if claude plugin marketplace add "$MARKETPLACE_SOURCE"; then
   echo -e "  ${GREEN}✓ Marketplace added${RESET}"
-fi
-
-# Install plugin (skip if already installed)
-if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
-  echo -e "  ${GREEN}✓ Plugin already installed${RESET}"
 else
-  claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null
-  echo -e "  ${GREEN}✓ Plugin installed${RESET}"
+  echo -e "  ${YELLOW}✗ Failed to add marketplace${RESET}"
+  debug "marketplace add exit code: $?"
+  exit 1
 fi
 
-echo -e "  ${GREEN}✓ 5 skills available${RESET}"
+debug "marketplaces after add: $(claude plugin marketplace list 2>&1 || echo 'none')"
+
+# Install plugin (remove and reinstall to ensure latest version)
+if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
+  debug "removing existing plugin '$PLUGIN_NAME@$MARKETPLACE_NAME'..."
+  claude plugin uninstall "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null || true
+fi
+
+debug "installing plugin: $PLUGIN_NAME@$MARKETPLACE_NAME"
+if claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
+  echo -e "  ${GREEN}✓ Plugin installed${RESET}"
+else
+  echo -e "  ${YELLOW}✗ Failed to install plugin${RESET}"
+  exit 1
+fi
+
+echo -e "  ${GREEN}✓ 3 skills available${RESET}"
 echo -e "  ${GREEN}✓ MCP server configured${RESET}"
-echo -e "  ${GREEN}✓ Auto-tracking enabled${RESET}"
 
 # ── Inject CLAUDE.md instructions ──────────────────────────────
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 BP_START="<!-- buildpartner-start -->"
 BP_END="<!-- buildpartner-end -->"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BLOCK_FILE="$SCRIPT_DIR/../claude-md-block.txt"
 
-BP_BLOCK="$BP_START
-## BuildPartner.ai
+if [ -f "$BLOCK_FILE" ]; then
+  BP_BLOCK=$(cat "$BLOCK_FILE")
 
-When I ask for coaching, a setup review, or help improving my Claude Code workflow, use /buildpartner:claude-coach.
-When I ask a strategic question about pricing, marketing, content, launch, sales, or product, use /buildpartner:expert-advice.
-At the end of a productive week, suggest running /buildpartner:generate-personalized-training-data to capture what was built.
-$BP_END"
-
-if [ -f "$CLAUDE_MD" ] && grep -q "$BP_START" "$CLAUDE_MD"; then
-  sed -i.bak "/$BP_START/,/$BP_END/d" "$CLAUDE_MD" && rm -f "$CLAUDE_MD.bak"
-fi
-mkdir -p "$(dirname "$CLAUDE_MD")"
-echo "" >> "$CLAUDE_MD"
-echo "$BP_BLOCK" >> "$CLAUDE_MD"
-echo -e "  ${GREEN}✓ Claude Code integration configured${RESET}"
-
-echo ""
-
-# ── Step 3: Sync history ────────────────────────────────────────
-echo -e "${BOLD}  [3/3] Syncing your history...${RESET}"
-
-if [ -n "$TOKEN" ]; then
-  npx buildpartner sync > /dev/null 2>&1 &
-  echo -e "  ${GREEN}✓ Syncing sessions in background${RESET}"
+  if [ -f "$CLAUDE_MD" ] && grep -q "$BP_START" "$CLAUDE_MD"; then
+    sed -i.bak "/$BP_START/,/$BP_END/d" "$CLAUDE_MD" && rm -f "$CLAUDE_MD.bak"
+  fi
+  mkdir -p "$(dirname "$CLAUDE_MD")"
+  echo "" >> "$CLAUDE_MD"
+  echo "$BP_BLOCK" >> "$CLAUDE_MD"
+  echo -e "  ${GREEN}✓ Claude Code integration configured${RESET}"
 fi
 
 echo ""
 
 # Open dashboard
 if [ -n "$TOKEN" ]; then
-  DASH_URL="https://buildpartner.ai/dashboard?t=$TOKEN&installed=true"
+  DASH_URL="${API_BASE}/dashboard?t=$TOKEN&installed=true"
   if command -v open &> /dev/null; then
     open "$DASH_URL" 2>/dev/null && echo -e "  ${GREEN}✓ Opening your dashboard...${RESET}" || true
   elif command -v xdg-open &> /dev/null; then
@@ -272,13 +310,13 @@ echo -e "${ORANGE}  ╭───────────────────
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  │  You're all set.                             │${RESET}"
 echo -e "${ORANGE}  │                                              │${RESET}"
-echo -e "${ORANGE}  │  Sessions syncing in background               │${RESET}"
-echo -e "${ORANGE}  │  5 skills installed                          │${RESET}"
-echo -e "${ORANGE}  │  Auto-tracking enabled                       │${RESET}"
+echo -e "${ORANGE}  │  3 skills installed                          │${RESET}"
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  ╰──────────────────────────────────────────────╯${RESET}"
 echo ""
-echo -e "${BOLD}  Try this now:${RESET}"
+echo -e "${BOLD}  Next step:${RESET} Start a new Claude Code session and try:"
 echo ""
-echo -e "  ${ORANGE}/buildpartner:claude-coach${RESET}"
+echo -e "  ${ORANGE}/bp:expert-advice${RESET}"
+echo ""
+echo -e "  ${DIM}If you're already in Claude Code, restart the session first.${RESET}"
 echo ""
