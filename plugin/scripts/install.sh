@@ -311,17 +311,9 @@ echo -e "${ORANGE}  │  3 skills installed                          │${RESET}
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  ╰──────────────────────────────────────────────╯${RESET}"
 echo ""
-echo -e "${BOLD}  Next step:${RESET} Open Claude Code and paste this to get started:"
+echo -e "${BOLD}  Next step:${RESET} Start a new Claude Code session and try:"
 echo ""
 echo -e "  ${ORANGE}/bp:expert-advice${RESET}"
 echo ""
-
-# If we're in an interactive terminal (not piped from curl), offer to launch claude
-if [ -t 0 ] && command -v claude &> /dev/null; then
-  printf "  Launch Claude Code now? [Y/n] "
-  read -r LAUNCH_REPLY </dev/tty
-  if [ -z "$LAUNCH_REPLY" ] || echo "$LAUNCH_REPLY" | grep -qi "^y"; then
-    echo ""
-    exec claude
-  fi
-fi
+echo -e "  ${DIM}If you're already in Claude Code, restart the session first.${RESET}"
+echo ""
