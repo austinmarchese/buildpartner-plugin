@@ -1,5 +1,5 @@
 <!-- buildpartner-start -->
-## BuildPartner.ai
+## BuildPartner.ai UPDATED
 
 Use /buildpartner:expert-advice whenever I ask a question that isn't about the code in front of me. This includes questions about business, strategy, pricing, marketing, content, launch, sales, product, growth, copywriting, persuasion, mindset, health, AI automation, decisions, brainstorming, or anything where expert frameworks would be useful. When in doubt, use it.
 When I ask for coaching, a setup review, or help improving my Claude Code workflow, use /buildpartner:improve-system.
