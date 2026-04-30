@@ -49,6 +49,13 @@ debug() {
 }
 
 API_DOMAIN=$(echo "$API_BASE" | sed 's|https\?://||; s|/$||')
+
+# Include api_base in auth.json when not production
+if echo "$API_BASE" | grep -q "www\.buildpartner\.ai"; then
+  AUTH_API_LINE=""
+else
+  AUTH_API_LINE="\"api_base\": \"$API_BASE\","
+fi
 debug "API_BASE=$API_BASE"
 debug "API_DOMAIN=$API_DOMAIN"
 debug "LOCAL_MODE=$LOCAL_MODE"
@@ -96,6 +103,7 @@ if [ -n "$PROVIDED_TOKEN" ]; then
   "email": "$EMAIL",
   "username": "$USERNAME",
   "token": "$TOKEN",
+  $AUTH_API_LINE
   "profile_url": "$API_DOMAIN/$USERNAME",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }

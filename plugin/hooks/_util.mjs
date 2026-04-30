@@ -6,7 +6,15 @@ export const BP_DIR = path.join(os.homedir(), ".buildpartner");
 export const AUTH_FILE = path.join(BP_DIR, "auth.json");
 export const ACCESS_FILE = path.join(BP_DIR, "access.json");
 export const SPOOL_FILE = path.join(BP_DIR, "spool.ndjson");
-export const API_BASE = process.env.BP_API_BASE || "https://www.buildpartner.ai";
+function getApiBase() {
+  if (process.env.BP_API_BASE) return process.env.BP_API_BASE;
+  try {
+    const auth = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"));
+    if (auth.api_base) return auth.api_base;
+  } catch {}
+  return "https://www.buildpartner.ai";
+}
+export const API_BASE = getApiBase();
 
 export function ensureDir() {
   fs.mkdirSync(BP_DIR, { recursive: true });
