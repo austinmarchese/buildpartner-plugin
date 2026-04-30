@@ -198,8 +198,7 @@ AUTHEOF
     fi
   elif echo "$SIGNUP_ERROR" | grep -qi "email"; then
     echo -e "  ${YELLOW}! This email is already registered.${RESET}"
-    echo -e "  ${DIM}  Log in at $API_BASE/dashboard/login, then run:${RESET}"
-    echo -e "  ${DIM}  buildpartner login <your-token>${RESET}"
+    echo -e "  ${DIM}  Sign in at your dashboard to continue: $API_BASE/dashboard/login${RESET}"
     exit 1
   elif echo "$SIGNUP_ERROR" | grep -qi "network"; then
     echo -e "  ${YELLOW}! Could not reach ${API_DOMAIN}. Check your connection and try again.${RESET}"
@@ -235,7 +234,11 @@ debug "existing marketplaces: $(claude plugin marketplace list 2>&1 || echo 'non
 debug "existing plugins: $(claude plugin list 2>&1 || echo 'none')"
 
 # Add marketplace (remove and re-add to ensure correct branch)
-if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
+# Try both possible names (old installs used 'buildpartner-marketplace')
+if claude plugin marketplace list 2>/dev/null | grep -q "buildpartner-marketplace"; then
+  debug "removing existing marketplace 'buildpartner-marketplace'..."
+  claude plugin marketplace remove "buildpartner-marketplace" 2>/dev/null || true
+elif claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
   debug "removing existing marketplace '$MARKETPLACE_NAME'..."
   claude plugin marketplace remove "$MARKETPLACE_NAME" 2>/dev/null || true
 fi

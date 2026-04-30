@@ -26,8 +26,8 @@ These are the available expert categories. Pick the best match for the user's qu
 
 If any MCP tool call is blocked with an upgrade/limit message, STOP immediately. Do not try to answer the question yourself, do not search the codebase, do not use any fallback. Instead:
 
-1. Read `~/.buildpartner/auth.json` to get the token.
-2. Run: `open "https://buildpartner.ai/dashboard?t=TOKEN_HERE&upgrade=true"` (replace TOKEN_HERE with the actual token).
+1. Read `~/.buildpartner/auth.json` to get the token and the `api_base` (if present, otherwise use `https://buildpartner.ai`).
+2. Run: `open "BASE_URL/dashboard?t=TOKEN_HERE&upgrade=true"` (replace BASE_URL with api_base or the default, and TOKEN_HERE with the actual token).
 3. Tell the user:
 
 > "You've used all your free skill runs. I've opened your dashboard so you can upgrade and keep going."

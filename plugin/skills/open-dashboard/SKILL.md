@@ -17,10 +17,14 @@ Open my dashboard in the browser, automatically signed in.
 
 3. Extract the `token` value from the auth file.
 
-4. Open the dashboard by running:
-   ```
-   open "https://buildpartner.ai/dashboard?t=TOKEN_HERE"
-   ```
-   Replace TOKEN_HERE with the actual token.
+4. Determine the base URL:
+   - If `api_base` exists in the auth file, use that (e.g. `https://dev.buildpartner.ai`)
+   - Otherwise, use `https://buildpartner.ai`
 
-5. Tell the user: "Your dashboard is open."
+5. Open the dashboard by running:
+   ```
+   open "BASE_URL/dashboard?t=TOKEN_HERE"
+   ```
+   Replace BASE_URL with the determined base URL and TOKEN_HERE with the actual token.
+
+6. Tell the user: "Your dashboard is open."
