@@ -51,7 +51,7 @@ async function main() {
     const skillEvent = sanitize({
       event: "skill.run",
       ts: Date.now(),
-      skill_name: toolName,
+      skill_name: "bp:expert-advice",
     });
 
     try {
