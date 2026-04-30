@@ -2,10 +2,10 @@
 # BuildPartner.ai Plugin Installer
 #
 # Production (from GitHub marketplace):
-#   curl -fsSL https://buildpartner.ai/install-plugin.sh | sh
+#   curl -fsSL https://buildpartner.ai/install.sh | sh
 #
 # Local dev (from local repo clone):
-#   curl -fsSL https://buildpartner.ai/install-plugin.sh | sh -s -- --local
+#   curl -fsSL https://buildpartner.ai/install.sh | sh -s -- --local
 #   OR: ./plugin/scripts/install.sh --local
 #
 # Installs the BuildPartner plugin into Claude Code via the marketplace system.
@@ -22,7 +22,8 @@ RESET='\033[0m'
 
 BP_DIR="$HOME/.buildpartner"
 AUTH_FILE="$BP_DIR/auth.json"
-API_BASE="https://www.buildpartner.ai"
+API_BASE="${BP_API_BASE:-https://www.buildpartner.ai}"
+API_DOMAIN=$(echo "$API_BASE" | sed 's|https\?://||; s|/$||')
 MARKETPLACE_NAME="buildpartner"
 PLUGIN_NAME="buildpartner"
 
@@ -80,7 +81,7 @@ if [ -n "$PROVIDED_TOKEN" ]; then
   "email": "$EMAIL",
   "username": "$USERNAME",
   "token": "$TOKEN",
-  "profile_url": "buildpartner.ai/$USERNAME",
+  "profile_url": "$API_DOMAIN/$USERNAME",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
@@ -138,7 +139,7 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
   "email": "$EMAIL",
   "username": "$USERNAME",
   "token": "$SIGNUP_TOKEN",
-  "profile_url": "buildpartner.ai/$USERNAME",
+  "profile_url": "$API_DOMAIN/$USERNAME",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
@@ -159,7 +160,7 @@ AUTHEOF
   "email": "$EMAIL",
   "username": "$USERNAME",
   "token": "$SIGNUP_TOKEN",
-  "profile_url": "buildpartner.ai/$USERNAME",
+  "profile_url": "$API_DOMAIN/$USERNAME",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
@@ -178,7 +179,7 @@ AUTHEOF
     echo -e "  ${DIM}  buildpartner login <your-token>${RESET}"
     exit 1
   elif echo "$SIGNUP_ERROR" | grep -qi "network"; then
-    echo -e "  ${YELLOW}! Could not reach buildpartner.ai. Check your connection and try again.${RESET}"
+    echo -e "  ${YELLOW}! Could not reach ${API_DOMAIN}. Check your connection and try again.${RESET}"
     exit 1
   else
     echo -e "  ${YELLOW}! Signup failed: $SIGNUP_ERROR${RESET}"
@@ -217,46 +218,33 @@ else
   echo -e "  ${GREEN}✓ Plugin installed${RESET}"
 fi
 
-echo -e "  ${GREEN}✓ 5 skills available${RESET}"
+echo -e "  ${GREEN}✓ 3 skills available${RESET}"
 echo -e "  ${GREEN}✓ MCP server configured${RESET}"
-echo -e "  ${GREEN}✓ Auto-tracking enabled${RESET}"
 
 # ── Inject CLAUDE.md instructions ──────────────────────────────
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 BP_START="<!-- buildpartner-start -->"
 BP_END="<!-- buildpartner-end -->"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BLOCK_FILE="$SCRIPT_DIR/../claude-md-block.txt"
 
-BP_BLOCK="$BP_START
-## BuildPartner.ai
+if [ -f "$BLOCK_FILE" ]; then
+  BP_BLOCK=$(cat "$BLOCK_FILE")
 
-When I ask for coaching, a setup review, or help improving my Claude Code workflow, use /buildpartner:claude-coach.
-When I ask a strategic question about pricing, marketing, content, launch, sales, or product, use /buildpartner:expert-advice.
-At the end of a productive week, suggest running /buildpartner:generate-personalized-training-data to capture what was built.
-$BP_END"
-
-if [ -f "$CLAUDE_MD" ] && grep -q "$BP_START" "$CLAUDE_MD"; then
-  sed -i.bak "/$BP_START/,/$BP_END/d" "$CLAUDE_MD" && rm -f "$CLAUDE_MD.bak"
-fi
-mkdir -p "$(dirname "$CLAUDE_MD")"
-echo "" >> "$CLAUDE_MD"
-echo "$BP_BLOCK" >> "$CLAUDE_MD"
-echo -e "  ${GREEN}✓ Claude Code integration configured${RESET}"
-
-echo ""
-
-# ── Step 3: Sync history ────────────────────────────────────────
-echo -e "${BOLD}  [3/3] Syncing your history...${RESET}"
-
-if [ -n "$TOKEN" ]; then
-  npx buildpartner sync > /dev/null 2>&1 &
-  echo -e "  ${GREEN}✓ Syncing sessions in background${RESET}"
+  if [ -f "$CLAUDE_MD" ] && grep -q "$BP_START" "$CLAUDE_MD"; then
+    sed -i.bak "/$BP_START/,/$BP_END/d" "$CLAUDE_MD" && rm -f "$CLAUDE_MD.bak"
+  fi
+  mkdir -p "$(dirname "$CLAUDE_MD")"
+  echo "" >> "$CLAUDE_MD"
+  echo "$BP_BLOCK" >> "$CLAUDE_MD"
+  echo -e "  ${GREEN}✓ Claude Code integration configured${RESET}"
 fi
 
 echo ""
 
 # Open dashboard
 if [ -n "$TOKEN" ]; then
-  DASH_URL="https://buildpartner.ai/dashboard?t=$TOKEN&installed=true"
+  DASH_URL="${API_BASE}/dashboard?t=$TOKEN&installed=true"
   if command -v open &> /dev/null; then
     open "$DASH_URL" 2>/dev/null && echo -e "  ${GREEN}✓ Opening your dashboard...${RESET}" || true
   elif command -v xdg-open &> /dev/null; then
@@ -272,13 +260,21 @@ echo -e "${ORANGE}  ╭───────────────────
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  │  You're all set.                             │${RESET}"
 echo -e "${ORANGE}  │                                              │${RESET}"
-echo -e "${ORANGE}  │  Sessions syncing in background               │${RESET}"
-echo -e "${ORANGE}  │  5 skills installed                          │${RESET}"
-echo -e "${ORANGE}  │  Auto-tracking enabled                       │${RESET}"
+echo -e "${ORANGE}  │  3 skills installed                          │${RESET}"
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  ╰──────────────────────────────────────────────╯${RESET}"
 echo ""
-echo -e "${BOLD}  Try this now:${RESET}"
+echo -e "${BOLD}  Next step:${RESET} Open Claude Code and paste this to get started:"
 echo ""
-echo -e "  ${ORANGE}/buildpartner:claude-coach${RESET}"
+echo -e "  ${ORANGE}/bp:expert-advice${RESET}"
 echo ""
+
+# If we're already inside a terminal, try to launch claude directly
+if [ -t 1 ] && command -v claude &> /dev/null; then
+  printf "  Launch Claude Code now? [Y/n] "
+  read -r LAUNCH_REPLY
+  if [ -z "$LAUNCH_REPLY" ] || echo "$LAUNCH_REPLY" | grep -qi "^y"; then
+    echo ""
+    exec claude
+  fi
+fi

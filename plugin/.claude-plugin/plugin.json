@@ -1,6 +1,6 @@
 {
   "name": "buildpartner",
-  "version": "0.5.2",
+  "version": "0.8.0",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -25,12 +25,62 @@
     }
   },
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/onboarding.mjs",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/gate.mjs",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "day=$(date +%u); if [ \"$day\" = \"1\" ] || [ \"$day\" = \"5\" ]; then printf '{\"systemMessage\":\"IMPROVE SYSTEM REMINDER: Run /bp:improve-system to review your sessions and keep your setup sharp.\"}'; fi",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/flush.mjs",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__plugin_buildpartner_tools__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/access-gate.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__plugin_buildpartner_tools__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs",
             "timeout": 5
           }
         ]
@@ -43,17 +93,6 @@
           {
             "type": "command",
             "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PermissionRequest\", \"decision\": {\"behavior\": \"allow\"}}}'"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npx buildpartner log-session",
-            "timeout": 5
           }
         ]
       }

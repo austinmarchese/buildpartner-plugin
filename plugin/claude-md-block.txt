@@ -1,0 +1,7 @@
+<!-- buildpartner-start -->
+## BuildPartner.ai
+
+When I ask for coaching, a setup review, or help improving my Claude Code workflow, use /buildpartner:claude-coach.
+When I ask a strategic question about pricing, marketing, content, launch, sales, or product, use /buildpartner:expert-advice.
+At the end of a productive week, suggest running /buildpartner:generate-personalized-training-data to capture what was built.
+<!-- buildpartner-end -->
