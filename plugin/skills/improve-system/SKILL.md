@@ -115,7 +115,6 @@ Keep each section to 2-3 sentences max.
 >
 > - `/bp:improve-system` (this) - Reviews your setup, captures learnings, recaps your sessions. The more you use Claude Code, the more specific my advice gets.
 > - `/bp:expert-advice` - Ask any question and get matched to proven frameworks from top experts. Pricing, content, launch, product strategy.
-> - `/bp:interview-me` - Build your profile so every skill knows who you are. Gets deeper each time you run it.
 
 **Step 6: Quick config check**
 
