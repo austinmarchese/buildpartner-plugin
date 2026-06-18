@@ -5,8 +5,8 @@ import { readAuth, sanitize, writeAccess, API_BASE, SPOOL_FILE, ensureDir, debug
 
 const PLUGIN_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const CLAUDE_MD = path.join(os.homedir(), ".claude", "CLAUDE.md");
-const BP_START = "<!-- buildpartner-start -->";
-const BP_END = "<!-- buildpartner-end -->";
+const BP_START = "<!-- bp-dev-start -->";
+const BP_END = "<!-- bp-dev-end -->";
 
 function syncClaudeMdBlock() {
   const blockFile = path.join(PLUGIN_ROOT, "claude-md-block.txt");
