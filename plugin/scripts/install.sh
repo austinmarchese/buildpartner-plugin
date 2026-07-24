@@ -220,6 +220,10 @@ if [ "$LOCAL_MODE" = true ]; then
   MARKETPLACE_SOURCE="./$REPO_DIR"
 elif echo "$API_BASE" | grep -q "dev\."; then
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin#dev"
+  # deploy-dev-plugin.sh brands the dev plugin as bp-dev (name + marketplace),
+  # so install it under that id. Prod stays buildpartner@buildpartner below.
+  MARKETPLACE_NAME="bp-dev"
+  PLUGIN_NAME="bp-dev"
 else
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
 fi
