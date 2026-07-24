@@ -6,7 +6,12 @@ import { readAuth, sanitize, readAccess, writeAccess, SPOOL_FILE, ensureDir, deb
 // 2. If the tool is get_expert_knowledge, also spools a skill.run event (for usage counting)
 // 3. Decrements local access counter for mid-session gating
 
-const SKILL_TRIGGER_TOOL = "mcp__plugin_buildpartner_tools__get_expert_knowledge";
+// Tools that count as a skill run (one shared free-tier meter). Each maps to
+// the skill name recorded for the usage event.
+const SKILL_TOOLS = {
+  "mcp__plugin_buildpartner_tools__get_expert_knowledge": "bp:expert-advice",
+  "mcp__plugin_buildpartner_tools__get_build": "bp:build",
+};
 
 async function main() {
   const auth = readAuth();
@@ -46,12 +51,13 @@ async function main() {
     // never crash
   }
 
-  // 2. If this is the skill trigger tool, also spool a skill.run event
-  if (toolName === SKILL_TRIGGER_TOOL) {
+  // 2. If this is a skill-counting tool, also spool a skill.run event
+  const skillName = SKILL_TOOLS[toolName];
+  if (skillName) {
     const skillEvent = sanitize({
       event: "skill.run",
       ts: Date.now(),
-      skill_name: "bp:expert-advice",
+      skill_name: skillName,
     });
 
     try {

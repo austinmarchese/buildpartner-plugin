@@ -1,19 +1,19 @@
 {
-  "name": "bp-dev",
+  "name": "buildpartner",
   "owner": {
     "name": "BuildPartner.ai",
     "email": "hello@buildpartner.ai"
   },
   "metadata": {
     "description": "Expert guidance, coaching, and personalized training inside Claude Code.",
-    "version": "0.11.0"
+    "version": "0.10.0"
   },
   "plugins": [
     {
-      "name": "bp-dev",
+      "name": "buildpartner",
       "source": "./plugin",
       "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
-      "version": "0.11.0",
+      "version": "0.10.0",
       "category": "productivity",
       "tags": [
         "coaching",

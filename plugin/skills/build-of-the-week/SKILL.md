@@ -1,0 +1,72 @@
+---
+name: bp:build
+description: "Walk through a BuildPartner Build of the Week live in your terminal. Loads the build's steps and prompts, fills each prompt with your project's real context, runs it with you one step at a time, and verifies before moving on. Use when the user says 'build of the week', 'this week's build', 'run the build', 'walk me through the build', or names a specific build."
+---
+
+# /bp:build
+
+Guide the user through a BuildPartner Build of the Week end to end, inside their Claude Code session. You are not summarizing the build. You are building it with them: loading each step's prompt, filling it with their real context, running it, and verifying, one step at a time.
+
+## 1. Load the build
+
+Call the `get_build` MCP tool.
+
+- Default (no argument): `get_build({ current: true })` for this week's featured build.
+- User named a build ("build 3", "the email one", a slug): call `get_build()` with no args to get the index, match their words to a `slug`, then `get_build({ slug })`.
+
+Always load through the MCP tool, never from memory or a hardcoded copy. The content is served live so it stays current and so the user's plan is respected.
+
+If the tool returns `"limit_reached"` or `"locked": true`, follow its `action` (open the dashboard to upgrade) and stop. Do not invent locked content.
+
+## 2. Orient them (short)
+
+Lead with the payoff, not a wall of text:
+
+- The `benefit` line first, this is why they'd build it
+- Title, category, and `timeLabel`
+- The three-line `summary` (what it is / how it impacts you / why now)
+- How many `steps` it has
+
+Then confirm the workspace with **AskUserQuestion** (header `Workspace`): options **"This project"** (mark recommended) and **"A different directory"** (they can pick Other to type a path). Do not touch files until they choose.
+
+## 3. Walk the steps, one at a time, confirming each
+
+**This is a hard gate, not a suggestion.** Do exactly one step, then stop. Do NOT read ahead, batch steps, or run several prompts in one turn. Compressing or skipping steps is the single most common way this goes wrong, especially on smaller models. If you are unsure whether to advance, you are not allowed to advance: finish and verify the current step first. Every step must be confirmed by the user before it runs and verified with evidence before the next one starts. No exceptions.
+
+For each entry in `steps`, in order:
+
+1. **Announce** the step: its number, `kicker`, and `title`. Explain the `body` in a sentence or two, tied to *their* repo.
+
+2. **Gather context.** If the step has `inputs`:
+   - When `fillFrom` is `"repo"`, try to auto-detect the answer first (e.g. find their CLAUDE.md). Only ask if you can't determine it or it's ambiguous.
+   - Otherwise ask the `ask` question with **AskUserQuestion**, one question per input: offer the `default` as the first option (mark it recommended) plus any obvious alternatives. The user picks Other to type a custom value (names, paths, free text).
+   - Substitute each answer into the `snippet` wherever `{key}` appears.
+
+3. **Show and confirm.** Show the filled `snippet` and say what running it will do. Then use **AskUserQuestion** (header `Step N`) with options **"Run it"** (mark recommended), **"Tweak first"**, and **"Skip this step"**. Do nothing that reads or changes their project until they choose "Run it". This is a walkthrough, not a takeover, they confirm each step.
+
+4. **Run it** once confirmed:
+   - `mode: "command"` → run it in the shell and show the output.
+   - `mode: "prompt"` → execute it as your own action against their project (make the edit, run the analysis), adapted to their actual files. Show what changed (the diff, the new file, the result).
+
+5. **Verify against the step's `verify` string, with a blind check.** Do not grade your own work: an agent that just did the work is biased toward declaring it done. Instead, spawn a fresh sub-agent whose only job is to confirm the `verify` criterion against the real project state, having not seen your work. It reports pass or fail with the concrete evidence (the file exists, the rule is present in CLAUDE.md, the number moved). Only advance on a pass. If it fails, fix it and re-check before the next step.
+
+   If you cannot spawn a sub-agent (e.g. no permission, or a harness that doesn't support it), STOP and verify inline instead, but still by inspecting the actual project state and showing the evidence, never by asserting from memory that it worked.
+
+Between steps the user can tweak, skip, or go deeper. Match their pace. If they say "just do it," keep moving but still show what changed and still verify.
+
+## 4. Land the outcome
+
+When the steps are done, run the build's `outcome` as a checklist and confirm each item is actually true in their project. Call out anything not done.
+
+If the build has a `pluginCta`, offer it as the natural next action (e.g. `/bp:improve-system` for a personalized pass).
+
+Close by pointing forward: more builds live in the dashboard under Build of the Week, and a new one drops each week. Invite them back for the next one.
+
+## Rules
+
+- Use **AskUserQuestion** for every decision point (workspace, each input, each per-step confirm) so choices render as clean option cards. One question at a time, options limited to the real choices, and let Other cover free-form answers. Never bury a decision in prose the user has to answer by typing.
+- Load content only through `get_build`. Never fabricate steps, prompts, or verify criteria.
+- Build in their repo, with their context. Generic output is the failure mode.
+- One step at a time, always. The per-step gate is un-skippable: confirm before running, blind-verify with evidence before advancing. Batching or skipping is the dominant failure mode.
+- Verification is a blind check by a fresh sub-agent, never self-grading. Fall back to inline evidence only if sub-agents aren't available.
+- Keep the user driving.

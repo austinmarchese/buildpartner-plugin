@@ -1,16 +1,6 @@
-<!-- bp-dev-start -->
+<!-- buildpartner-start -->
 ## BuildPartner.ai
 
-Use /bp-dev:expert-advice whenever I ask a question that isn't about the code in front of me. This includes questions about business, strategy, pricing, marketing, content, launch, sales, product, growth, copywriting, persuasion, mindset, health, AI automation, decisions, brainstorming, or anything where expert frameworks would be useful. When in doubt, use it.
-When I ask for coaching, a setup review, or help improving my Claude Code workflow, use /bp-dev:improve-system.
-
-### BuildPartner Workers (background routing)
-
-For bounded mechanical work that does NOT need Claude's reasoning, delegate to the `bp-worker` subagent instead of doing it inline. This stretches the user's Claude usage by routing grunt work to cheaper models. Trigger automatically without waiting for the user to invoke /bp:offload.
-
-Offload-eligible (route to bp-worker): renames, format conversions, boilerplate, code/doc summarization, test stubs for known signatures, grep + plain-English explanation, single-file mechanical edits, simple multi-file consistent transforms.
-
-Keep on Claude: architecture, design, debugging unknown failures, multi-step reasoning across the codebase, anything ambiguous or that requires judgment. When in doubt, stay on Claude.
-
-If the user explicitly asks to offload something, invoke /bp:offload.
-<!-- bp-dev-end -->
+Use /buildpartner:expert-advice whenever I ask a question that isn't about the code in front of me. This includes questions about business, strategy, pricing, marketing, content, launch, sales, product, growth, copywriting, persuasion, mindset, health, AI automation, decisions, brainstorming, or anything where expert frameworks would be useful. When in doubt, use it.
+When I ask for coaching, a setup review, or help improving my Claude Code workflow, use /buildpartner:improve-system.
+<!-- buildpartner-end -->

@@ -3,10 +3,9 @@ import path from "path";
 import os from "os";
 
 export const BP_DIR = path.join(os.homedir(), ".buildpartner");
-export const BP_DEV_DIR = path.join(os.homedir(), ".buildpartner-dev");
 export const AUTH_FILE = path.join(BP_DIR, "auth.json");
-export const ACCESS_FILE = path.join(BP_DEV_DIR, "access.json");
-export const SPOOL_FILE = path.join(BP_DEV_DIR, "spool.ndjson");
+export const ACCESS_FILE = path.join(BP_DIR, "access.json");
+export const SPOOL_FILE = path.join(BP_DIR, "spool.ndjson");
 function getApiBase() {
   if (process.env.BP_API_BASE) return process.env.BP_API_BASE;
   try {
@@ -19,7 +18,6 @@ export const API_BASE = getApiBase();
 
 export function ensureDir() {
   fs.mkdirSync(BP_DIR, { recursive: true });
-  fs.mkdirSync(BP_DEV_DIR, { recursive: true });
 }
 
 export function readAuth() {
@@ -43,7 +41,7 @@ export function writeAccess(access) {
   fs.writeFileSync(ACCESS_FILE, JSON.stringify(access), "utf8");
 }
 
-const DEBUG_LOG = path.join(BP_DEV_DIR, "debug.log");
+const DEBUG_LOG = path.join(BP_DIR, "debug.log");
 const MAX_LOG_SIZE = 256 * 1024; // 256KB cap
 
 /** Append a timestamped line to ~/.buildpartner/debug.log. Truncated by gate.mjs on SessionStart. */
