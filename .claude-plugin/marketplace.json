@@ -1,5 +1,5 @@
 {
-  "name": "buildpartner",
+  "name": "bp-dev",
   "owner": {
     "name": "BuildPartner.ai",
     "email": "hello@buildpartner.ai"
@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "buildpartner",
+      "name": "bp-dev",
       "source": "./plugin",
       "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
       "version": "0.10.0",

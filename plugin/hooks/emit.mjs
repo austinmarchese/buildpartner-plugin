@@ -6,12 +6,21 @@ import { readAuth, sanitize, readAccess, writeAccess, SPOOL_FILE, ensureDir, deb
 // 2. If the tool is get_expert_knowledge, also spools a skill.run event (for usage counting)
 // 3. Decrements local access counter for mid-session gating
 
-// Tools that count as a skill run (one shared free-tier meter). Each maps to
-// the skill name recorded for the usage event.
-const SKILL_TOOLS = {
-  "mcp__plugin_buildpartner_tools__get_expert_knowledge": "bp:expert-advice",
-  "mcp__plugin_buildpartner_tools__get_build": "bp:build",
+// Tools that count as a skill run (one shared free-tier meter). Matched by
+// suffix, not full name, because the MCP namespace is prefixed with the plugin
+// name (mcp__plugin_<name>_tools__...) which differs between the prod plugin
+// (`buildpartner`) and the dev plugin (`bp-dev`). Suffix matching works for both.
+const SKILL_TOOL_SUFFIXES = {
+  "_tools__get_expert_knowledge": "bp:expert-advice",
+  "_tools__get_build": "bp:build",
 };
+
+function skillNameForTool(toolName) {
+  for (const [suffix, name] of Object.entries(SKILL_TOOL_SUFFIXES)) {
+    if (toolName.endsWith(suffix)) return name;
+  }
+  return null;
+}
 
 async function main() {
   const auth = readAuth();
@@ -52,7 +61,7 @@ async function main() {
   }
 
   // 2. If this is a skill-counting tool, also spool a skill.run event
-  const skillName = SKILL_TOOLS[toolName];
+  const skillName = skillNameForTool(toolName);
   if (skillName) {
     const skillEvent = sanitize({
       event: "skill.run",
