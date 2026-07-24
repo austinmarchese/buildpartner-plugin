@@ -22,6 +22,18 @@ function skillNameForTool(toolName) {
   return null;
 }
 
+// A build walk should meter as ONE skill run, not once per call. get_build is
+// paginated: opening a build (orientation) counts; the per-step fetches
+// (step=N) and the plain index browse (no current/slug) do not. Every other
+// counting tool counts on each call.
+function countsAsRun(toolName, input) {
+  if (toolName.endsWith("_tools__get_build")) {
+    if (input && input.step != null) return false; // walking a step
+    return !!(input && (input.current || input.slug)); // orientation open only
+  }
+  return true;
+}
+
 async function main() {
   const auth = readAuth();
   if (!auth?.token) process.exit(0);
@@ -43,6 +55,7 @@ async function main() {
   }
 
   const toolName = hookEvent.tool_name || hookEvent.toolName || "";
+  const toolInput = hookEvent.tool_input || hookEvent.toolInput || {};
 
   debug("emit", `PostToolUse: ${toolName}`);
 
@@ -62,7 +75,7 @@ async function main() {
 
   // 2. If this is a skill-counting tool, also spool a skill.run event
   const skillName = skillNameForTool(toolName);
-  if (skillName) {
+  if (skillName && countsAsRun(toolName, toolInput)) {
     const skillEvent = sanitize({
       event: "skill.run",
       ts: Date.now(),

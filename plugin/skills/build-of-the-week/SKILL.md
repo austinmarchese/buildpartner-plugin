@@ -9,10 +9,12 @@ Guide the user through a BuildPartner Build of the Week end to end, inside their
 
 ## 1. Load the build
 
-Call the `get_build` MCP tool.
+`get_build` is paginated: you open a build to get its **orientation** (benefit, summary, `stepCount`, outcome, and the build's `slug`), then pull each **step** on demand. This keeps each payload small and matches the one-step-at-a-time walk below. Do NOT try to load all steps up front.
 
-- Default (no argument): `get_build({ current: true })` for this week's featured build.
-- User named a build ("build 3", "the email one", a slug): call `get_build()` with no args to get the index, match their words to a `slug`, then `get_build({ slug })`.
+- Default (no argument): `get_build({ current: true })` for this week's featured build's orientation.
+- User named a build ("build 3", "the email one", a slug): call `get_build()` with no args to get the index, match their words to a `slug`, then `get_build({ slug })` for its orientation.
+
+The orientation gives you everything you need for step 2 below (orient them) plus a `slug` and `stepCount`. **Keep the `slug`** — you'll pass it to fetch each step. Pin step fetches to that `slug`, not `current`.
 
 Always load through the MCP tool, never from memory or a hardcoded copy. The content is served live so it stays current and so the user's plan is respected.
 
@@ -25,7 +27,7 @@ Lead with the payoff, not a wall of text:
 - The `benefit` line first, this is why they'd build it
 - Title, category, and `timeLabel`
 - The three-line `summary` (what it is / how it impacts you / why now)
-- How many `steps` it has
+- How many steps it has (`stepCount`)
 
 Then confirm the workspace with **AskUserQuestion** (header `Workspace`): options **"This project"** (mark recommended) and **"A different directory"** (they can pick Other to type a path). Do not touch files until they choose.
 
@@ -33,7 +35,9 @@ Then confirm the workspace with **AskUserQuestion** (header `Workspace`): option
 
 **This is a hard gate, not a suggestion.** Do exactly one step, then stop. Do NOT read ahead, batch steps, or run several prompts in one turn. Compressing or skipping steps is the single most common way this goes wrong, especially on smaller models. If you are unsure whether to advance, you are not allowed to advance: finish and verify the current step first. Every step must be confirmed by the user before it runs and verified with evidence before the next one starts. No exceptions.
 
-For each entry in `steps`, in order:
+Fetch each step only when you reach it: `get_build({ slug, step: N })`, starting at `step: 1` and walking up to `stepCount`. The response gives you the step's `data` (kicker, title, body, snippet, mode, inputs, fillFrom, verify) plus `hasNext`. You do not have the steps until you fetch them, which is deliberate: it enforces the one-at-a-time gate. To skip, jump, or go back, just fetch that `step` number.
+
+For each step `N` from 1 to `stepCount`, fetch it, then in order:
 
 1. **Announce** the step: its number, `kicker`, and `title`. Explain the `body` in a sentence or two, tied to *their* repo.
 
