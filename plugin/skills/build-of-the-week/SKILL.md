@@ -43,7 +43,8 @@ For each step `N` from 1 to `stepCount`, fetch it, then in order:
 
 2. **Gather context.** If the step has `inputs`:
    - When `fillFrom` is `"repo"`, try to auto-detect the answer first (e.g. find their CLAUDE.md). Only ask if you can't determine it or it's ambiguous.
-   - Otherwise ask the `ask` question with **AskUserQuestion**, one question per input: offer the `default` as the first option (mark it recommended) plus any obvious alternatives. The user picks Other to type a custom value (names, paths, free text).
+   - Otherwise ask the `ask` question with **AskUserQuestion**, one question per input. **Generate the options from the user's actual project, not from guesses.** The build gives you only the `ask` and a `default`, never a fixed option list, that is deliberate: the options are yours to derive so they fit *this* repo. Before asking, quickly inspect the project (grep, read the relevant files) and offer concrete candidates that genuinely exist in their system, each with a one-line "why" tied to real code. Put the `default` first if it still fits, mark the best pick recommended, and always leave Other for a custom value. If you cannot ground good options, offer fewer real ones and lean on Other rather than inventing filler.
+   - **Single vs multi-select.** Match the question to reality. Set `multiSelect: true` when more than one option can legitimately apply at once, i.e. the answer fills a *list* or the question reads like "which of these…" / "select all that apply" (e.g. picking several topics for a search to cover, several files to touch). Keep the default single-select when exactly one answer fills the slot. If the input itself declares `multi: true`, honor it. When a multi-select answer comes back with several values, join them naturally into the `{key}` slot (comma/newline as the snippet expects).
    - Substitute each answer into the `snippet` wherever `{key}` appears.
 
 3. **Show and confirm.** Show the filled `snippet` and say what running it will do. Then use **AskUserQuestion** (header `Step N`) with options **"Run it"** (mark recommended), **"Tweak first"**, and **"Skip this step"**. Do nothing that reads or changes their project until they choose "Run it". This is a walkthrough, not a takeover, they confirm each step.
@@ -69,7 +70,8 @@ Close by pointing forward: more builds live in the dashboard under Build of the 
 ## Rules
 
 - Use **AskUserQuestion** for every decision point (workspace, each input, each per-step confirm) so choices render as clean option cards. One question at a time, options limited to the real choices, and let Other cover free-form answers. Never bury a decision in prose the user has to answer by typing.
-- Load content only through `get_build`. Never fabricate steps, prompts, or verify criteria.
+- Match the select mode to the question: exclusive choices (workspace, Run/Tweak/Skip, one value that fills one slot) use single-select; questions where several answers can apply together use `multiSelect: true`. When unsure, ask whether picking two answers would both make sense, if yes, it's multi-select.
+- Options for a question are yours to generate from the real repo, never authored in the build. Ground them in the user's actual code so they're specific and true, not generic placeholders. (Steps, prompts, and verify criteria, by contrast, come only from `get_build`, never fabricate those.)
 - Build in their repo, with their context. Generic output is the failure mode.
 - One step at a time, always. The per-step gate is un-skippable: confirm before running, blind-verify with evidence before advancing. Batching or skipping is the dominant failure mode.
 - Verification is a blind check by a fresh sub-agent, never self-grading. Fall back to inline evidence only if sub-agents aren't available.
