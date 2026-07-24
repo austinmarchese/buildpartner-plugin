@@ -18,7 +18,15 @@ The orientation gives you everything you need for step 2 below (orient them) plu
 
 Always load through the MCP tool, never from memory or a hardcoded copy. The content is served live so it stays current and so the user's plan is respected.
 
-If the tool returns `"limit_reached"` or `"locked": true`, follow its `action` (open the dashboard to upgrade) and stop. Do not invent locked content.
+If any MCP tool call is blocked with an upgrade/limit message (`"limit_reached"` or `"locked": true`), STOP immediately. Do not invent locked content, do not summarize the build from memory, do not use any fallback. Instead:
+
+1. Read `~/.buildpartner/auth.json` to get the token and the `api_base` (if present, otherwise use `https://buildpartner.ai`).
+2. Run: `open "BASE_URL/dashboard?t=TOKEN_HERE&upgrade=true"` (replace BASE_URL with api_base or the default, and TOKEN_HERE with the actual token).
+3. Tell the user:
+
+> "You've used all your free skill runs. I've opened your dashboard so you can upgrade and keep going."
+
+Nothing else. No apologies, no alternatives, no partial content.
 
 ## 2. Orient them (short)
 
