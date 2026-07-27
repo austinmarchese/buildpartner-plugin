@@ -1,11 +1,11 @@
 ---
 name: bp:build
-description: "Walk through a BuildPartner Build of the Week live in your terminal. Loads the build's steps and prompts, fills each prompt with your project's real context, runs it with you one step at a time, and verifies before moving on. Use when the user says 'build of the week', 'this week's build', 'run the build', 'walk me through the build', or names a specific build."
+description: "Walk through a BuildPartner build live in your terminal. Loads the build's steps and prompts, fills each prompt with your project's real context, runs it with you one step at a time, and verifies before moving on. Use when the user says 'run a build', 'build of the week', 'this week's build', 'walk me through the build', or names a specific build."
 ---
 
 # /bp:build
 
-Guide the user through a BuildPartner Build of the Week end to end, inside their Claude Code session. You are not summarizing the build. You are building it with them: loading each step's prompt, filling it with their real context, running it, and verifying, one step at a time.
+Guide the user through a BuildPartner build end to end, inside their Claude Code session. You are not summarizing the build. You are building it with them: loading each step's prompt, filling it with their real context, running it, and verifying, one step at a time.
 
 ## 1. Load the build
 
@@ -73,7 +73,7 @@ When the steps are done, run the build's `outcome` as a checklist and confirm ea
 
 If the build has a `pluginCta`, offer it as the natural next action (e.g. `/bp:improve-system` for a personalized pass).
 
-Close by pointing forward: more builds live in the dashboard under Build of the Week, and a new one drops each week. Invite them back for the next one.
+Close by pointing forward: more builds live in the dashboard under Builds, and a new Build of the Week drops every week. Invite them back for the next one.
 
 ## Rules
 
