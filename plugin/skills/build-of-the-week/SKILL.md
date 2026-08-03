@@ -14,7 +14,7 @@ Guide the user through a BuildPartner build end to end, inside their Claude Code
 - Default (no argument): `get_build({ current: true })` for this week's featured build's orientation.
 - User named a build ("build 3", "the email one", a slug): call `get_build()` with no args to get the index, match their words to a `slug`, then `get_build({ slug })` for its orientation.
 
-The orientation gives you everything you need for step 2 below (orient them) plus a `slug` and `stepCount`. **Keep the `slug`** — you'll pass it to fetch each step. Pin step fetches to that `slug`, not `current`.
+The orientation gives you everything you need for step 2 below (orient them) plus a `slug` and `stepCount`. **Keep the `slug`**: you'll pass it to fetch each step. Pin step fetches to that `slug`, not `current`.
 
 Always load through the MCP tool, never from memory or a hardcoded copy. The content is served live so it stays current and so the user's plan is respected.
 
