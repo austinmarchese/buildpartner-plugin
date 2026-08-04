@@ -1,38 +1,16 @@
 import fs from "fs";
-import { readAuth, sanitize, readAccess, writeAccess, SPOOL_FILE, ensureDir, debug } from "./_util.mjs";
+import { readAuth, sanitize, SPOOL_FILE, ensureDir, debug } from "./_util.mjs";
 
-// PostToolUse hook: fires after any BuildPartner MCP tool call.
-// 1. Spools the tool_use event locally
-// 2. If the tool is get_expert_knowledge, also spools a skill.run event (for usage counting)
-// 3. Decrements local access counter for mid-session gating
-
-// Tools that count as a skill run (one shared free-tier meter). Matched by
-// suffix, not full name, because the MCP namespace is prefixed with the plugin
-// name (mcp__plugin_<name>_tools__...) which differs between the prod plugin
-// (`buildpartner`) and the dev plugin (`bp-dev`). Suffix matching works for both.
-const SKILL_TOOL_SUFFIXES = {
-  "_tools__get_expert_knowledge": "bp:expert-advice",
-  "_tools__get_build": "bp:build",
-};
-
-function skillNameForTool(toolName) {
-  for (const [suffix, name] of Object.entries(SKILL_TOOL_SUFFIXES)) {
-    if (toolName.endsWith(suffix)) return name;
-  }
-  return null;
-}
-
-// A build walk should meter as ONE skill run, not once per call. get_build is
-// paginated: opening a build (orientation) counts; the per-step fetches
-// (step=N) and the plain index browse (no current/slug) do not. Every other
-// counting tool counts on each call.
-function countsAsRun(toolName, input) {
-  if (toolName.endsWith("_tools__get_build")) {
-    if (input && input.step != null) return false; // walking a step
-    return !!(input && (input.current || input.slug)); // orientation open only
-  }
-  return true;
-}
+// PostToolUse hook: fires after any BuildPartner MCP tool call and appends a
+// tool_use event to the local spool. That is all it does. No network call, no
+// counting, no gating.
+//
+// It used to also spool a skill.run event and decrement a cached access.json,
+// which made this hook load-bearing for revenue: if the hook did not fire (a
+// stale matcher, a deleted file, a user who edits it), runs were free and
+// unlimited. Metering now happens on the request that serves the skill
+// (meterSkillRun in apps/web/lib/auth.ts), which the client cannot skip and
+// cannot influence. What is left here is analytics, and analytics only.
 
 async function main() {
   const auth = readAuth();
@@ -55,11 +33,9 @@ async function main() {
   }
 
   const toolName = hookEvent.tool_name || hookEvent.toolName || "";
-  const toolInput = hookEvent.tool_input || hookEvent.toolInput || {};
 
   debug("emit", `PostToolUse: ${toolName}`);
 
-  // 1. Spool the tool_use event
   const event = sanitize({
     event: "tool_use",
     ts: Date.now(),
@@ -71,38 +47,6 @@ async function main() {
     fs.appendFileSync(SPOOL_FILE, JSON.stringify(event) + "\n", "utf8");
   } catch {
     // never crash
-  }
-
-  // 2. If this is a skill-counting tool, also spool a skill.run event
-  const skillName = skillNameForTool(toolName);
-  if (skillName && countsAsRun(toolName, toolInput)) {
-    const skillEvent = sanitize({
-      event: "skill.run",
-      ts: Date.now(),
-      skill_name: skillName,
-    });
-
-    try {
-      fs.appendFileSync(SPOOL_FILE, JSON.stringify(skillEvent) + "\n", "utf8");
-    } catch {
-      // never crash
-    }
-
-    // 3. Decrement local access counter
-    try {
-      const access = readAccess();
-      if (access && access.plan === "free" && access.remaining > 0) {
-        const newRemaining = access.remaining - 1;
-        writeAccess({
-          ...access,
-          remaining: newRemaining,
-          has_access: newRemaining > 0,
-        });
-        debug("emit", `decremented remaining: ${access.remaining} -> ${newRemaining}`);
-      }
-    } catch {
-      // never crash
-    }
   }
 }
 

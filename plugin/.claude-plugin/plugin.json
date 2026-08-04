@@ -1,6 +1,6 @@
 {
   "name": "bp-dev",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -62,21 +62,9 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "mcp__plugin_buildpartner_tools__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/access-gate.mjs",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
-        "matcher": "mcp__plugin_buildpartner_tools__.*",
+        "matcher": "mcp__plugin_[^_]+_tools__.*",
         "hooks": [
           {
             "type": "command",
@@ -88,7 +76,7 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": "mcp__plugin_buildpartner_tools__.*",
+        "matcher": "mcp__plugin_[^_]+_tools__.*",
         "hooks": [
           {
             "type": "command",

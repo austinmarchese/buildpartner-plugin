@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { readAuth, sanitize, writeAccess, API_BASE, SPOOL_FILE, ensureDir, debug, truncateDebugLog } from "./_util.mjs";
+import { readAuth, sanitize, API_BASE, SPOOL_FILE, ensureDir, debug, truncateDebugLog } from "./_util.mjs";
 
 const PLUGIN_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const CLAUDE_MD = path.join(os.homedir(), ".claude", "CLAUDE.md");
@@ -54,7 +54,7 @@ try {
     debug("gate", "CLAUDE.md sync skipped");
   }
 
-  // Sweep orphaned spool BEFORE checking access so the DB count is current
+  // Sweep any spool a previous session left behind (crash, force-quit).
   try {
     const spoolData = fs.readFileSync(SPOOL_FILE, "utf8").trim();
     if (spoolData) {
@@ -77,26 +77,11 @@ try {
     // Spool sweep failed - will retry next session
   }
 
-  // Check access and cache the result (after sweep so DB reflects flushed usage)
-  try {
-    const res = await fetch(`${API_BASE}/api/buildpartner/check-access`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${auth.token}`,
-        "Content-Type": "application/json",
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      writeAccess({ has_access: data.has_access, remaining: data.remaining, plan: data.plan });
-      debug("gate", `access cached: plan=${data.plan} remaining=${data.remaining} has_access=${data.has_access}`);
-    } else {
-      debug("gate", `check-access failed: ${res.status}`);
-    }
-  } catch {
-    // Network failure: keep old cached access (graceful degradation)
-  }
+  // No access check here any more. This hook used to call /check-access and
+  // cache the free-tier count to access.json for the session, which meant a
+  // whole session's gating decisions were made from one number read at
+  // SessionStart. Access is now decided per request by the API routes that
+  // serve the skills, so there is nothing to pre-fetch.
 } catch {
   // Outer catch: exit silently
 }

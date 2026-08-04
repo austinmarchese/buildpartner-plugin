@@ -4,7 +4,6 @@ import os from "os";
 
 export const BP_DIR = path.join(os.homedir(), ".buildpartner");
 export const AUTH_FILE = path.join(BP_DIR, "auth.json");
-export const ACCESS_FILE = path.join(BP_DIR, "access.json");
 export const SPOOL_FILE = path.join(BP_DIR, "spool.ndjson");
 function getApiBase() {
   if (process.env.BP_API_BASE) return process.env.BP_API_BASE;
@@ -28,18 +27,9 @@ export function readAuth() {
   }
 }
 
-export function readAccess() {
-  try {
-    return JSON.parse(fs.readFileSync(ACCESS_FILE, "utf8").replace(/^\uFEFF/, ""));
-  } catch {
-    return null;
-  }
-}
-
-export function writeAccess(access) {
-  ensureDir();
-  fs.writeFileSync(ACCESS_FILE, JSON.stringify(access), "utf8");
-}
+// readAccess/writeAccess lived here to cache the free-tier count locally.
+// Deleted with the client-side meter: access is decided per request by the API
+// routes, so there is nothing local to cache and nothing local to trust.
 
 const DEBUG_LOG = path.join(BP_DIR, "debug.log");
 const MAX_LOG_SIZE = 256 * 1024; // 256KB cap
