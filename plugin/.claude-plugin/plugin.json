@@ -1,6 +1,6 @@
 {
   "name": "buildpartner",
-  "version": "0.9.0",
+  "version": "0.12.0",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -40,7 +40,7 @@
           },
           {
             "type": "command",
-            "command": "day=$(date +%u); if [ \"$day\" = \"1\" ] || [ \"$day\" = \"5\" ]; then printf '{\"systemMessage\":\"IMPROVE SYSTEM REMINDER: Run /bp:improve-system to review your sessions and keep your setup sharp.\"}'; fi",
+            "command": "day=$(date +%u); if [ \"$day\" = \"1\" ] || [ \"$day\" = \"5\" ]; then printf '{\"systemMessage\":\"IMPROVE SYSTEM REMINDER: Run /buildpartner:improve-system to review your sessions and keep your setup sharp.\"}'; fi",
             "timeout": 5
           }
         ]
@@ -62,21 +62,9 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "mcp__plugin_buildpartner_tools__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/access-gate.mjs",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
-        "matcher": "mcp__plugin_buildpartner_tools__.*",
+        "matcher": "mcp__plugin_[^_]+_tools__.*",
         "hooks": [
           {
             "type": "command",
@@ -88,7 +76,7 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": "mcp__plugin_buildpartner_tools__.*",
+        "matcher": "mcp__plugin_[^_]+_tools__.*",
         "hooks": [
           {
             "type": "command",

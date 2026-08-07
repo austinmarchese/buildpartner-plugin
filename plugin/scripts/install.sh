@@ -10,6 +10,13 @@
 #
 # Installs the BuildPartner plugin into Claude Code via the marketplace system.
 
+# Wrap the whole script in a { } block so `curl ... | sh` reads the entire file
+# off the pipe BEFORE executing any of it. Without this, a child process that
+# reads stdin (the nested Claude Code installer, `claude plugin ...`) consumes
+# the not-yet-parsed rest of the piped script and execution dies mid-run.
+# Draining the pipe up front makes that impossible. Matching } at EOF.
+{
+
 set -e
 
 # Colors
@@ -74,10 +81,69 @@ else
 fi
 echo ""
 
-# ── Check Claude Code ────────────────────────────────────────────
-if ! command -v claude &> /dev/null; then
-  echo -e "  ${YELLOW}✗ Claude Code not found${RESET}"
-  echo "  Install Claude Code first: https://claude.ai/code"
+# ── Check Claude Code (installing it if missing) ──────────────────
+# Anthropic's native installer puts the binary in ~/.local/bin, which macOS zsh
+# does NOT have on PATH by default. It prints the fix but never applies it, so
+# we add it for this run and persist it to the user's shell rc. Skipping that
+# would mean the install succeeds here and their next terminal says
+# "claude: command not found" on the very last step.
+LOCAL_BIN="$HOME/.local/bin"
+
+path_has_local_bin() {
+  case ":$PATH:" in
+    *":$LOCAL_BIN:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+use_local_bin() {
+  path_has_local_bin || { PATH="$LOCAL_BIN:$PATH"; export PATH; }
+}
+
+# Append the PATH export to the rc of the user's login shell, once. Guarded by a
+# marker so re-running the installer never duplicates the line, and skipped
+# entirely if they already reference .local/bin themselves.
+persist_local_bin() {
+  rc=""
+  case "$(basename "${SHELL:-}")" in
+    zsh) rc="$HOME/.zshrc" ;;
+    bash) if [ -f "$HOME/.bash_profile" ]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi ;;
+  esac
+  [ -n "$rc" ] || return 0
+  if [ -f "$rc" ] && grep -q "buildpartner-path\|\.local/bin" "$rc" 2>/dev/null; then
+    return 0
+  fi
+  {
+    echo ""
+    echo "# buildpartner-path (added by the BuildPartner.ai installer)"
+    echo 'export PATH="$HOME/.local/bin:$PATH"'
+  } >> "$rc" 2>/dev/null || return 0
+  echo -e "  ${GREEN}✓ Added ~/.local/bin to PATH in $(basename "$rc")${RESET}"
+}
+
+use_local_bin
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo -e "  ${DIM}Claude Code not found. Installing it for you (from Anthropic)...${RESET}"
+  # Download first, then run from a file. Piping Anthropic's installer straight
+  # into `bash` would give it OUR stdin, and `bash < /dev/null` would starve it
+  # of the script itself. A temp file sidesteps both.
+  CC_INSTALLER="$(mktemp)"
+  if curl -fsSL https://claude.ai/install.sh -o "$CC_INSTALLER" 2>/dev/null &&
+     bash "$CC_INSTALLER" </dev/null; then
+    use_local_bin
+    persist_local_bin
+  fi
+  rm -f "$CC_INSTALLER"
+fi
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo -e "  ${YELLOW}✗ Claude Code could not be installed automatically${RESET}"
+  echo ""
+  echo "  Install it manually, then re-run this command:"
+  echo -e "    ${ORANGE}curl -fsSL https://claude.ai/install.sh | bash${RESET}"
+  echo ""
+  echo -e "  ${DIM}Docs: https://claude.ai/code${RESET}"
   exit 1
 fi
 echo -e "  ${GREEN}✓ Claude Code found${RESET}"
@@ -198,7 +264,8 @@ AUTHEOF
     fi
   elif echo "$SIGNUP_ERROR" | grep -qi "email"; then
     echo -e "  ${YELLOW}! This email is already registered.${RESET}"
-    echo -e "  ${DIM}  Sign in at your dashboard to continue: $API_BASE/dashboard/login${RESET}"
+    echo -e "  ${DIM}  Reconnect this machine here: $API_BASE/dashboard/login?connect=1${RESET}"
+    echo -e "  ${DIM}  Verify your email there and it gives you the command to paste.${RESET}"
     exit 1
   elif echo "$SIGNUP_ERROR" | grep -qi "network"; then
     echo -e "  ${YELLOW}! Could not reach ${API_DOMAIN}. Check your connection and try again.${RESET}"
@@ -220,6 +287,10 @@ if [ "$LOCAL_MODE" = true ]; then
   MARKETPLACE_SOURCE="./$REPO_DIR"
 elif echo "$API_BASE" | grep -q "dev\."; then
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin#dev"
+  # deploy-dev-plugin.sh brands the dev plugin as bp-dev (name + marketplace),
+  # so install it under that id. Prod stays buildpartner@buildpartner below.
+  MARKETPLACE_NAME="bp-dev"
+  PLUGIN_NAME="bp-dev"
 else
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
 fi
@@ -237,14 +308,14 @@ debug "existing plugins: $(claude plugin list 2>&1 || echo 'none')"
 # Try both possible names (old installs used 'buildpartner-marketplace')
 if claude plugin marketplace list 2>/dev/null | grep -q "buildpartner-marketplace"; then
   debug "removing existing marketplace 'buildpartner-marketplace'..."
-  claude plugin marketplace remove "buildpartner-marketplace" 2>/dev/null || true
+  claude plugin marketplace remove "buildpartner-marketplace" </dev/null 2>/dev/null || true
 elif claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
   debug "removing existing marketplace '$MARKETPLACE_NAME'..."
-  claude plugin marketplace remove "$MARKETPLACE_NAME" 2>/dev/null || true
+  claude plugin marketplace remove "$MARKETPLACE_NAME" </dev/null 2>/dev/null || true
 fi
 
 debug "adding marketplace: $MARKETPLACE_SOURCE"
-if claude plugin marketplace add "$MARKETPLACE_SOURCE"; then
+if claude plugin marketplace add "$MARKETPLACE_SOURCE" </dev/null; then
   echo -e "  ${GREEN}✓ Marketplace added${RESET}"
 else
   echo -e "  ${YELLOW}✗ Failed to add marketplace${RESET}"
@@ -257,19 +328,29 @@ debug "marketplaces after add: $(claude plugin marketplace list 2>&1 || echo 'no
 # Install plugin (remove and reinstall to ensure latest version)
 if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
   debug "removing existing plugin '$PLUGIN_NAME@$MARKETPLACE_NAME'..."
-  claude plugin uninstall "$PLUGIN_NAME@$MARKETPLACE_NAME" 2>/dev/null || true
+  claude plugin uninstall "$PLUGIN_NAME@$MARKETPLACE_NAME" </dev/null 2>/dev/null || true
 fi
 
 debug "installing plugin: $PLUGIN_NAME@$MARKETPLACE_NAME"
-if claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
+if claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME" </dev/null; then
   echo -e "  ${GREEN}✓ Plugin installed${RESET}"
 else
   echo -e "  ${YELLOW}✗ Failed to install plugin${RESET}"
   exit 1
 fi
 
-echo -e "  ${GREEN}✓ 3 skills available${RESET}"
+echo -e "  ${GREEN}✓ 4 skills available${RESET}"
 echo -e "  ${GREEN}✓ MCP server configured${RESET}"
+
+# Record the completed install server-side so the dashboard's "Install the
+# plugin" onboarding step ticks immediately. Best-effort: an install must
+# never fail over telemetry, so errors are swallowed.
+if [ -n "$TOKEN" ]; then
+  curl -s -X POST "$API_BASE/api/buildpartner/ingest" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"events":[{"event":"install.completed"}]}' >/dev/null 2>&1 || true
+fi
 
 # ── Inject CLAUDE.md instructions ──────────────────────────────
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
@@ -310,13 +391,15 @@ echo -e "${ORANGE}  ╭───────────────────
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  │  You're all set.                             │${RESET}"
 echo -e "${ORANGE}  │                                              │${RESET}"
-echo -e "${ORANGE}  │  3 skills installed                          │${RESET}"
+echo -e "${ORANGE}  │  4 skills installed                          │${RESET}"
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  ╰──────────────────────────────────────────────╯${RESET}"
 echo ""
 echo -e "${BOLD}  Next step:${RESET} Start a new Claude Code session and try:"
 echo ""
-echo -e "  ${ORANGE}/bp:expert-advice${RESET}"
+echo -e "  ${ORANGE}/buildpartner:expert-advice${RESET}"
 echo ""
 echo -e "  ${DIM}If you're already in Claude Code, restart the session first.${RESET}"
 echo ""
+
+} # end pipe-drain wrapper (see matching { near top)

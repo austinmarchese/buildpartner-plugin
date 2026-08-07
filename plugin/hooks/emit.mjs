@@ -1,12 +1,16 @@
 import fs from "fs";
-import { readAuth, sanitize, readAccess, writeAccess, SPOOL_FILE, ensureDir, debug } from "./_util.mjs";
+import { readAuth, sanitize, SPOOL_FILE, ensureDir, debug } from "./_util.mjs";
 
-// PostToolUse hook: fires after any BuildPartner MCP tool call.
-// 1. Spools the tool_use event locally
-// 2. If the tool is get_expert_knowledge, also spools a skill.run event (for usage counting)
-// 3. Decrements local access counter for mid-session gating
-
-const SKILL_TRIGGER_TOOL = "mcp__plugin_buildpartner_tools__get_expert_knowledge";
+// PostToolUse hook: fires after any BuildPartner MCP tool call and appends a
+// tool_use event to the local spool. That is all it does. No network call, no
+// counting, no gating.
+//
+// It used to also spool a skill.run event and decrement a cached access.json,
+// which made this hook load-bearing for revenue: if the hook did not fire (a
+// stale matcher, a deleted file, a user who edits it), runs were free and
+// unlimited. Metering now happens on the request that serves the skill
+// (meterSkillRun in apps/web/lib/auth.ts), which the client cannot skip and
+// cannot influence. What is left here is analytics, and analytics only.
 
 async function main() {
   const auth = readAuth();
@@ -32,7 +36,6 @@ async function main() {
 
   debug("emit", `PostToolUse: ${toolName}`);
 
-  // 1. Spool the tool_use event
   const event = sanitize({
     event: "tool_use",
     ts: Date.now(),
@@ -44,37 +47,6 @@ async function main() {
     fs.appendFileSync(SPOOL_FILE, JSON.stringify(event) + "\n", "utf8");
   } catch {
     // never crash
-  }
-
-  // 2. If this is the skill trigger tool, also spool a skill.run event
-  if (toolName === SKILL_TRIGGER_TOOL) {
-    const skillEvent = sanitize({
-      event: "skill.run",
-      ts: Date.now(),
-      skill_name: "bp:expert-advice",
-    });
-
-    try {
-      fs.appendFileSync(SPOOL_FILE, JSON.stringify(skillEvent) + "\n", "utf8");
-    } catch {
-      // never crash
-    }
-
-    // 3. Decrement local access counter
-    try {
-      const access = readAccess();
-      if (access && access.plan === "free" && access.remaining > 0) {
-        const newRemaining = access.remaining - 1;
-        writeAccess({
-          ...access,
-          remaining: newRemaining,
-          has_access: newRemaining > 0,
-        });
-        debug("emit", `decremented remaining: ${access.remaining} -> ${newRemaining}`);
-      }
-    } catch {
-      // never crash
-    }
   }
 }
 

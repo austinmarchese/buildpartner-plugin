@@ -1,9 +1,9 @@
 ---
-name: bp:open-dashboard
+name: open-dashboard
 description: "Open my dashboard in the browser, automatically signed in."
 ---
 
-# /bp:open-dashboard
+# /buildpartner:open-dashboard
 
 Open my dashboard in the browser, automatically signed in.
 
@@ -12,7 +12,7 @@ Open my dashboard in the browser, automatically signed in.
 1. Read the auth file at `~/.buildpartner/auth.json` using the Read tool.
 
 2. If the file doesn't exist or has no token, tell the user:
-   "You haven't set up BuildPartner.ai yet. Re-run the install script: `curl -fsSL https://buildpartner.ai/install.sh | sh`"
+   "This machine isn't connected to a BuildPartner.ai account. If you already have one, reconnect here: https://buildpartner.ai/dashboard/login?connect=1 (verify your email and it gives you the command to paste). If you're new, run: `curl -fsSL https://buildpartner.ai/install.sh | sh`"
    Stop here.
 
 3. Extract the `token` value from the auth file.

@@ -1,9 +1,9 @@
 ---
-name: bp:expert-advice
+name: expert-advice
 description: "Ask any question and get matched to the right expert framework: pricing, content, launch, AI automation, marketing, sales, product strategy, and more."
 ---
 
-# /bp:expert-advice
+# /buildpartner:expert-advice
 
 Ask any question and get matched to the right expert framework: pricing, content, launch, AI automation, marketing, sales, product strategy, and more.
 
