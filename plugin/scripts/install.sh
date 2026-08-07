@@ -342,6 +342,16 @@ fi
 echo -e "  ${GREEN}✓ 3 skills available${RESET}"
 echo -e "  ${GREEN}✓ MCP server configured${RESET}"
 
+# Record the completed install server-side so the dashboard's "Install the
+# plugin" onboarding step ticks immediately. Best-effort: an install must
+# never fail over telemetry, so errors are swallowed.
+if [ -n "$TOKEN" ]; then
+  curl -s -X POST "$API_BASE/api/buildpartner/ingest" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"events":[{"event":"install.completed"}]}' >/dev/null 2>&1 || true
+fi
+
 # ── Inject CLAUDE.md instructions ──────────────────────────────
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 BP_START="<!-- buildpartner-start -->"

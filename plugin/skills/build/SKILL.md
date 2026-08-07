@@ -1,6 +1,6 @@
 ---
 name: bp:build
-description: "Walk through a BuildPartner build live in your terminal. Loads the build's steps and prompts, fills each prompt with your project's real context, runs it with you one step at a time, and verifies before moving on. Use when the user says 'run a build', 'build of the week', 'this week's build', 'walk me through the build', or names a specific build."
+description: "Walk through a BuildPartner build live in your terminal. Loads the build's steps and prompts, fills each prompt with your project's real context, runs it with you one step at a time, and verifies before moving on. Use when the user says 'run a build', 'the featured build', 'build of the week', 'this week's build', 'walk me through the build', or names a specific build."
 ---
 
 # /bp:build
@@ -11,7 +11,7 @@ Guide the user through a BuildPartner build end to end, inside their Claude Code
 
 `get_build` is paginated: you open a build to get its **orientation** (benefit, summary, `stepCount`, outcome, and the build's `slug`), then pull each **step** on demand. This keeps each payload small and matches the one-step-at-a-time walk below. Do NOT try to load all steps up front.
 
-- Default (no argument): `get_build({ current: true })` for this week's featured build's orientation.
+- Default (no argument): `get_build({ current: true })` for the featured build's orientation.
 - User named a build ("build 3", "the email one", a slug): call `get_build()` with no args to get the index, match their words to a `slug`, then `get_build({ slug })` for its orientation.
 
 The orientation gives you everything you need for step 2 below (orient them) plus a `slug` and `stepCount`. **Keep the `slug`**: you'll pass it to fetch each step. Pin step fetches to that `slug`, not `current`.
@@ -73,7 +73,7 @@ When the steps are done, run the build's `outcome` as a checklist and confirm ea
 
 If the build has a `pluginCta`, offer it as the natural next action (e.g. `/bp:improve-system` for a personalized pass).
 
-Close by pointing forward: more builds live in the dashboard under Builds, and a new Build of the Week drops every week. Invite them back for the next one.
+Close by pointing forward: more builds live in the dashboard under Builds, and new ones land there as we ship them. Invite them back for the next one.
 
 ## Rules
 
