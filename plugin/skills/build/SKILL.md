@@ -22,9 +22,9 @@ If any MCP tool call is blocked with an upgrade/limit message (`"limit_reached"`
 
 1. Read `~/.buildpartner/auth.json` to get the token and the `api_base` (if present, otherwise use `https://buildpartner.ai`).
 2. Run: `open "BASE_URL/dashboard?t=TOKEN_HERE&upgrade=true"` (replace BASE_URL with api_base or the default, and TOKEN_HERE with the actual token).
-3. Tell the user:
+3. Tell the user the `message` from the blocked tool result (it explains exactly what ran out), then:
 
-> "You've used all your free skill runs. I've opened your dashboard so you can upgrade and keep going."
+> "I've opened your dashboard so you can upgrade and keep going."
 
 Nothing else. No apologies, no alternatives, no partial content.
 
