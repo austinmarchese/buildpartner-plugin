@@ -1,0 +1,222 @@
+<!doctype html>
+<!--
+  BuildPartner.ai shared document template.
+
+  Any BuildPartner skill or build that produces a document for the user fills
+  this template and writes the result (e.g. to ~/Downloads). One template, one
+  brand: paper surface, copper accent, one ink at four opacities.
+  Colors mirror apps/web/app/globals.css tokens - keep them in sync.
+
+  HOW TO FILL (for Claude):
+  1. Replace {{title}} and {{subtitle}}.
+  2. Replace the <main> contents by composing the section patterns below.
+     Delete the example sections; they are markup references, not content.
+  3. Leave the <style> and <script> untouched.
+
+  SECTION PATTERNS (copy, fill, repeat as needed):
+
+  Text section:
+    <section>
+      <div class="kicker">KICKER</div>
+      <h2>Heading</h2>
+      <p>Body text.</p>
+    </section>
+
+  Evidence / bullet list:
+    <ul class="evidence">
+      <li>Point</li>
+    </ul>
+
+  Copy-command block (click to copy; keep data-copy equal to the command):
+    <div class="copyblock" data-copy="/buildpartner:build example">
+      <code>/buildpartner:build example</code><span class="copy-label">Copy</span>
+    </div>
+
+  Card (a recommended item):
+    <div class="card">
+      <div class="card-title">Title</div>
+      <p>Why this one.</p>
+      ...copyblock...
+    </div>
+
+  CTA button:
+    <a class="cta" href="https://www.buildpartner.ai/dashboard">Open your dashboard</a>
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{title}}</title>
+<style>
+  :root {
+    --surface: #f3ede2;
+    --card: #fbf8f2;
+    --body: #1a1614;
+    --muted: rgba(26, 22, 20, 0.62);
+    --faint: rgba(26, 22, 20, 0.42);
+    --rule: rgba(92, 66, 46, 0.16);
+    --accent: #a64422;
+    --accent-hover: #8a3a1d;
+    --console: #26201c;
+    --console-text: rgba(255, 248, 240, 0.9);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--surface);
+    color: var(--body);
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    padding: 48px 20px 80px;
+  }
+  .page { max-width: 720px; margin: 0 auto; }
+  header.doc { border-bottom: 1px solid var(--rule); padding-bottom: 28px; margin-bottom: 36px; }
+  .brand {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 18px;
+  }
+  h1 { font-size: 34px; line-height: 1.15; letter-spacing: -0.02em; margin-bottom: 10px; }
+  .subtitle { color: var(--muted); font-size: 17px; }
+  section { margin-bottom: 36px; }
+  .kicker {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 6px;
+  }
+  h2 { font-size: 21px; letter-spacing: -0.01em; margin-bottom: 10px; }
+  p { color: var(--muted); margin-bottom: 12px; }
+  .evidence { list-style: none; margin: 12px 0; }
+  .evidence li { padding: 6px 0 6px 22px; position: relative; color: var(--muted); }
+  .evidence li::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 15px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin: 14px 0;
+  }
+  .card-title { font-weight: 650; margin-bottom: 6px; }
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--accent);
+    background: rgba(166, 68, 34, 0.10);
+    border: 1px solid rgba(166, 68, 34, 0.25);
+    border-radius: 999px;
+    padding: 2px 12px;
+    margin-bottom: 10px;
+  }
+  .copyblock {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    background: var(--console);
+    color: var(--console-text);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 12px 0;
+    cursor: pointer;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+  }
+  .copyblock code { white-space: pre-wrap; word-break: break-word; }
+  .copy-label {
+    flex-shrink: 0;
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--accent);
+    border: 1px solid rgba(166, 68, 34, 0.5);
+    border-radius: 999px;
+    padding: 2px 12px;
+  }
+  .copyblock:hover .copy-label { background: rgba(166, 68, 34, 0.15); }
+  .cta {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 650;
+    border-radius: 10px;
+    padding: 12px 24px;
+    margin-top: 8px;
+  }
+  .cta:hover { background: var(--accent-hover); }
+  footer.doc {
+    border-top: 1px solid var(--rule);
+    margin-top: 48px;
+    padding-top: 20px;
+    color: var(--faint);
+    font-size: 13px;
+  }
+  footer.doc a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="doc">
+    <span class="brand">BuildPartner.ai</span>
+    <h1>{{title}}</h1>
+    <p class="subtitle">{{subtitle}}</p>
+  </header>
+
+  <main>
+    <!-- Compose section patterns here (see comment at top). Example: -->
+    <section>
+      <div class="kicker">Example</div>
+      <h2>Replace this section</h2>
+      <p>Delete the example content and compose the patterns documented at the top of this file.</p>
+      <div class="copyblock" data-copy="/buildpartner:build example">
+        <code>/buildpartner:build example</code><span class="copy-label">Copy</span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="doc">
+    Generated by <a href="https://www.buildpartner.ai">BuildPartner.ai</a> in your Claude Code session.
+  </footer>
+</div>
+<script>
+  document.querySelectorAll(".copyblock").forEach(function (block) {
+    block.addEventListener("click", function () {
+      var text = block.getAttribute("data-copy") || block.querySelector("code").textContent;
+      function done() {
+        var label = block.querySelector(".copy-label");
+        if (!label) return;
+        label.textContent = "Copied";
+        setTimeout(function () { label.textContent = "Copy"; }, 1600);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        done();
+      }
+    });
+  });
+</script>
+</body>
+</html>
