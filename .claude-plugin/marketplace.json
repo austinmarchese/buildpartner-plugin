@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Expert guidance, coaching, and personalized training inside Claude Code.",
-    "version": "0.12.3"
+    "version": "0.12.4"
   },
   "plugins": [
     {
       "name": "buildpartner",
       "source": "./plugin",
       "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
-      "version": "0.12.3",
+      "version": "0.12.4",
       "category": "productivity",
       "tags": [
         "coaching",
