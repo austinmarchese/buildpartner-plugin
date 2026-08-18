@@ -17,7 +17,6 @@ These are the available expert categories. Pick the best match for the user's qu
 - `product` - features, MVP, shipping, onboarding, activation, retention, UX
 - `business-strategy` - leverage, scale, positioning, competitive advantage, market
 - `ai-automation` - AI, Claude, agents, MCP, prompts, workflows, automation
-- `health` - energy, sleep, exercise, focus, performance, burnout
 - `persuasion` - influence, psychology, negotiation, trust, social proof
 - `copywriting` - headlines, CTAs, emails, landing pages, conversion
 - `mindset` - decisions, risk, motivation, discipline, mental models
