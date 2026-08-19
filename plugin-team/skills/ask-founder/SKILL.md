@@ -11,6 +11,14 @@ Ask your company's founder and leadership team anything. Answers come from their
 
 If any MCP tool call is blocked with an upgrade/limit/403 message, STOP immediately. Do not answer from your own knowledge. Tell the user the message from the blocked tool result (it explains what happened, usually that this account is not on a team plan), and suggest they contact their team lead.
 
+## If a tool result comes back as a stub or truncated
+
+If a tool result is replaced by a placeholder like "[Full result archived (N chars)...]" or otherwise arrives stubbed or truncated, that is the user's own local tooling intercepting the result, not a BuildPartner.ai failure. Do NOT try to recover the real content by reading session transcripts, cache directories, or any other file on disk, and never read credential files like `~/.buildpartner/auth.json` to re-fetch the data directly. Do not call the API directly either. Instead:
+
+1. Retry the exact same call once.
+2. If the category fetch is still stubbed, fetch the needed frameworks individually with the `topic` param, one slug per call, which returns smaller results.
+3. If a single-topic result is also stubbed, tell the user plainly that a local optimization tool intercepted the result and that they can exempt BuildPartner.ai's tools from it, then answer using the topic titles and descriptions you already have plus your own expertise, clearly labeled as NOT from leadership.
+
 ## Instructions
 
 1. Take the user's question.
