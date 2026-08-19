@@ -27,7 +27,7 @@ If a tool result is replaced by a placeholder like "[Full result archived (N cha
 
 3. Classify the question into the 1-2 best-matching verticals from that response.
 
-4. Call `get_founder_knowledge` again with the `category` param set to the matched vertical name(s), comma-separated for two (e.g. `{ "category": "content,sales" }`, using whatever names came back in step 2). This returns the full frameworks for that vertical.
+4. Call `get_founder_knowledge` again with the `category` param set to the matched vertical name(s), comma-separated for two (e.g. `{ "category": "content,sales" }`, using whatever names came back in step 2). This returns the frameworks for that vertical. If the response has `content_omitted: true`, the vertical is large and full content was withheld: pick the 1 to 3 most relevant frameworks from their titles/descriptions and fetch them with the `topic` param, comma-separated (e.g. `{ "topic": "pricing-tiers,discount-policy" }`). Otherwise the full content is already present in the response.
 
 5. If a matched vertical has zero frameworks (count was 0 in step 2, or the category call comes back empty):
    - Tell the user plainly that their leadership team has not added knowledge for that vertical yet.
