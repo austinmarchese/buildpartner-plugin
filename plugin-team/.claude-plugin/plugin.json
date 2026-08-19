@@ -1,0 +1,16 @@
+{
+  "name": "bp-dev-team",
+  "version": "0.12.5",
+  "description": "BuildPartner.ai team plan: ask your company's founder and leadership directly inside Claude Code.",
+  "author": {
+    "name": "BuildPartner.ai"
+  },
+  "homepage": "https://buildpartner.ai",
+  "repository": "https://github.com/austinmarchese/buildpartner-plugin",
+  "license": "MIT",
+  "keywords": [
+    "team",
+    "coaching",
+    "claude-code"
+  ]
+}

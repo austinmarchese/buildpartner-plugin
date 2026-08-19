@@ -17,15 +17,22 @@ The first time Claude Code starts after install, BuildPartner creates an account
 
 ## Skills
 
-BuildPartner ships three skills, all under the `bp:` namespace.
+BuildPartner ships four skills. Claude Code namespaces a plugin skill as
+`/<plugin name>:<skill name>`, so every command is prefixed with `buildpartner`.
 
-### `/bp:expert-advice`
+### `/bp-dev:build`
+Walks you through a BuildPartner build live in your terminal, one step at a time.
+Loads each step's prompt, fills it with your project's real context, runs it with
+you, and verifies before moving on. Run it bare for the current featured build,
+or name a specific one: `/bp-dev:build self-improving-system`.
+
+### `/bp-dev:expert-advice`
 Ask any question, get matched to the right expert framework. Covers pricing, content, launch, AI automation, marketing, sales, product strategy, and more. Use it whenever a decision would benefit from a battle-tested framework instead of a generic answer.
 
-### `/bp:improve-system`
+### `/bp-dev:improve-system`
 Keeps your Claude Code setup sharp. Reviews your sessions, captures learnings, audits for rot, and recaps recent work. Run it weekly to keep your CLAUDE.md, skills, and workflows from drifting.
 
-### `/bp:open-dashboard`
+### `/bp-dev:open-dashboard`
 Opens your BuildPartner dashboard in the browser, automatically signed in. Shortcut to your profile, skill usage, quests, and account settings.
 
 ## Dashboard
@@ -37,7 +44,7 @@ Your [dashboard](https://buildpartner.ai/dashboard) tracks:
 - Session activity and recaps
 - Account, billing, and subscription
 
-A friendly reminder to run `/bp:improve-system` fires on Mondays and Fridays at session start.
+A friendly reminder to run `/bp-dev:improve-system` fires on Mondays and Fridays at session start.
 
 ## How it works
 

@@ -1,9 +1,9 @@
 ---
-name: bp:build
+name: build
 description: "Walk through a BuildPartner build live in your terminal. Loads the build's steps and prompts, fills each prompt with your project's real context, runs it with you one step at a time, and verifies before moving on. Use when the user says 'run a build', 'the featured build', 'build of the week', 'this week's build', 'walk me through the build', or names a specific build."
 ---
 
-# /bp:build
+# /bp-dev:build
 
 Guide the user through a BuildPartner build end to end, inside their Claude Code session. You are not summarizing the build. You are building it with them: loading each step's prompt, filling it with their real context, running it, and verifying, one step at a time.
 
@@ -22,9 +22,9 @@ If any MCP tool call is blocked with an upgrade/limit message (`"limit_reached"`
 
 1. Read `~/.buildpartner/auth.json` to get the token and the `api_base` (if present, otherwise use `https://buildpartner.ai`).
 2. Run: `open "BASE_URL/dashboard?t=TOKEN_HERE&upgrade=true"` (replace BASE_URL with api_base or the default, and TOKEN_HERE with the actual token).
-3. Tell the user:
+3. Tell the user the `message` from the blocked tool result (it explains exactly what ran out), then:
 
-> "You've used all your free skill runs. I've opened your dashboard so you can upgrade and keep going."
+> "I've opened your dashboard so you can upgrade and keep going."
 
 Nothing else. No apologies, no alternatives, no partial content.
 
@@ -47,7 +47,9 @@ Fetch each step only when you reach it: `get_build({ slug, step: N })`, starting
 
 For each step `N` from 1 to `stepCount`, fetch it, then in order:
 
-1. **Announce** the step: its number, `kicker`, and `title`. Explain the `body` in a sentence or two, tied to *their* repo.
+1. **Announce** the step. Open with the progress line `Step N of {stepCount}`, then the `kicker` and `title`. Explain the `body` in a sentence or two, tied to *their* repo. Always show the progress line, so the user never has to ask where they are or how much is left.
+
+   **Then precheck, if the step's data has a `precheck` field.** Run it as ONE cheap probe against their real setup, right now, at this step (never reuse a probe result from earlier in the session, state may have changed). If it **fails, say nothing about it** and continue the step normally, most users have no prior setup and should never see this machinery. If it **passes**, present what already exists with the concrete evidence ("Gmail is already connected, I read one message and it's addressed to you"), then ask via **AskUserQuestion** (header `Step N`): **"Use what's already set up"** (mark recommended) / **"Redo this step"**. On "use existing", skip gathering inputs and running the snippet and go straight to the verify gate (point 6), the step still verifies with evidence before you advance. On "Redo", continue the step as if the precheck never passed. Steps without a `precheck` walk exactly as before.
 
 2. **Gather context.** If the step has `inputs`:
    - When `fillFrom` is `"repo"`, try to auto-detect the answer first (e.g. find their CLAUDE.md). Only ask if you can't determine it or it's ambiguous.
@@ -60,10 +62,26 @@ For each step `N` from 1 to `stepCount`, fetch it, then in order:
 4. **Run it** once confirmed:
    - `mode: "command"` → run it in the shell and show the output.
    - `mode: "prompt"` → execute it as your own action against their project (make the edit, run the analysis), adapted to their actual files. Show what changed (the diff, the new file, the result).
+   - **Do the work you can do.** A snippet is often a mix: some lines you can run, some only they can. Run every line you can run yourself and show the output. Hand them only the lines that genuinely need their terminal (`/usage`, `/context`, `/cost`, any interactive panel), one at a time, and say exactly what to look for in it. Never hand back the whole block and ask them to sort it out.
 
-5. **Verify against the step's `verify` string, with a blind check.** Do not grade your own work: an agent that just did the work is biased toward declaring it done. Instead, spawn a fresh sub-agent whose only job is to confirm the `verify` criterion against the real project state, having not seen your work. It reports pass or fail with the concrete evidence (the file exists, the rule is present in CLAUDE.md, the number moved). Only advance on a pass. If it fails, fix it and re-check before the next step.
+5. **Ask for anything only they can see, as options, never as prose.** When a step depends on something you cannot observe (a number in an interactive panel, a value in their account, what a tool printed on their screen), do not write out questions and wait for them to type paragraphs. Use **AskUserQuestion**, one question per call, with options you generate from the plausible real answers for *their* setup (for "what's eating your limit": the models and tools their config actually shows), plus:
+   - an option that means **"I'll paste it"** — if they paste raw output or drop a screenshot, you pull the numbers out of it, they never hand-extract; and
+   - an option that means **"couldn't run it, skip"**, so a panel that won't open never dead-ends the build.
+
+   Two related readings can share one AskUserQuestion call (max two). More than that, ask in sequence. If the exact number matters, offer ranges as options and let Other carry a precise value.
+
+6. **Verify against the step's `verify` string, with a blind check.** Do not grade your own work: an agent that just did the work is biased toward declaring it done. Instead, spawn a fresh sub-agent whose only job is to confirm the `verify` criterion against the real project state, having not seen your work. It reports pass or fail with the concrete evidence (the file exists, the rule is present in CLAUDE.md, the number moved). Only advance on a pass. If it fails, fix it and re-check before the next step.
 
    If you cannot spawn a sub-agent (e.g. no permission, or a harness that doesn't support it), STOP and verify inline instead, but still by inspecting the actual project state and showing the evidence, never by asserting from memory that it worked.
+
+   If the criterion is something only the user can see (a panel reading, an account value), a sub-agent cannot check it. Confirm it with them directly using the option-card pattern in point 5, echo back what they reported, and move on.
+
+7. **Offer the next step. Every time, without being asked.** Never end a turn with the step done and no way forward. Close with one line on what just happened, then immediately use **AskUserQuestion** (header `Step N of {stepCount}`) with:
+   - **"Next: <title of step N+1>"**, marked recommended — fetch step N+1 and start it
+   - **"Redo this step"**
+   - **"Stop here"** — and tell them the exact command to resume later: `/bp-dev:build <slug>`, plus that they can say "start at step N+1"
+
+   On the final step, the first option becomes **"Finish and check the outcome"**. If the user replies with anything that means keep going ("next", "continue", "ok", "what's the next step?"), treat it as Next and start the next step rather than re-asking.
 
 Between steps the user can tweak, skip, or go deeper. Match their pace. If they say "just do it," keep moving but still show what changed and still verify.
 
@@ -71,7 +89,7 @@ Between steps the user can tweak, skip, or go deeper. Match their pace. If they 
 
 When the steps are done, run the build's `outcome` as a checklist and confirm each item is actually true in their project. Call out anything not done.
 
-If the build has a `pluginCta`, offer it as the natural next action (e.g. `/bp:improve-system` for a personalized pass).
+If the build has a `pluginCta`, offer it as the natural next action (e.g. `/bp-dev:improve-system` for a personalized pass).
 
 Close by pointing forward: more builds live in the dashboard under Builds, and new ones land there as we ship them. Invite them back for the next one.
 
@@ -82,5 +100,8 @@ Close by pointing forward: more builds live in the dashboard under Builds, and n
 - Options for a question are yours to generate from the real repo, never authored in the build. Ground them in the user's actual code so they're specific and true, not generic placeholders. (Steps, prompts, and verify criteria, by contrast, come only from `get_build`, never fabricate those.)
 - Build in their repo, with their context. Generic output is the failure mode.
 - One step at a time, always. The per-step gate is un-skippable: confirm before running, blind-verify with evidence before advancing. Batching or skipping is the dominant failure mode.
+- A `precheck` never skips a step on its own. A failing precheck is invisible to the user; a passing one presents its evidence and the user chooses "use existing" or redo. Either way the step's verify gate still runs before advancing.
 - Verification is a blind check by a fresh sub-agent, never self-grading. Fall back to inline evidence only if sub-agents aren't available.
+- Every step ends with a `Step N of {stepCount}` question offering the next step. The user should never have to ask "what's next?" or type a command to advance. If they had to ask, the step ended wrong.
+- Never make the user answer in prose what you could offer as options. If you need a reading only they can see, generate real candidate options, plus "I'll paste it" and "couldn't run it, skip". Reading a pasted panel dump or screenshot is your job, not theirs.
 - Keep the user driving.

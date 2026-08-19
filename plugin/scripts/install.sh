@@ -37,10 +37,13 @@ PLUGIN_NAME="buildpartner"
 LOCAL_MODE=false
 PROVIDED_TOKEN=""
 DEBUG=false
+FORCE_TEAM=false
+ORG_SLUG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --local) LOCAL_MODE=true ;;
     --debug) DEBUG=true ;;
+    --team) FORCE_TEAM=true ;;
     --api=*) API_BASE="${1#--api=}" ;;
     --api) API_BASE="$2"; shift ;;
     --token=*) PROVIDED_TOKEN="${1#--token=}" ;;
@@ -158,6 +161,7 @@ if [ -n "$PROVIDED_TOKEN" ]; then
   VERIFY_DATA=$(curl -s -H "Authorization: Bearer $PROVIDED_TOKEN" "$API_BASE/api/buildpartner/verify-token" 2>/dev/null)
   VERIFY_EMAIL=$(echo "$VERIFY_DATA" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.email)console.log(d.email)}catch{}" 2>/dev/null)
   VERIFY_USER=$(echo "$VERIFY_DATA" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.username)console.log(d.username)}catch{}" 2>/dev/null)
+  ORG_SLUG=$(echo "$VERIFY_DATA" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.org)console.log(d.org)}catch{}" 2>/dev/null)
 
   if [ -n "$VERIFY_EMAIL" ]; then
     TOKEN="$PROVIDED_TOKEN"
@@ -185,8 +189,10 @@ fi
 if [ -f "$AUTH_FILE" ] && [ "${SKIP_SIGNUP}" != "true" ]; then
   TOKEN=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('$AUTH_FILE','utf-8')).token)}catch{}" 2>/dev/null)
   if [ -n "$TOKEN" ]; then
-    VERIFY=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "$API_BASE/api/buildpartner/verify-token" 2>/dev/null || echo "000")
+    VERIFY_BODY=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TOKEN" "$API_BASE/api/buildpartner/verify-token" 2>/dev/null || echo "000")
+    VERIFY=$(echo "$VERIFY_BODY" | tail -1)
     if [ "$VERIFY" = "200" ]; then
+      ORG_SLUG=$(echo "$VERIFY_BODY" | sed '$d' | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.org)console.log(d.org)}catch{}" 2>/dev/null)
       EMAIL=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('$AUTH_FILE','utf-8')).email)}catch{}" 2>/dev/null)
       echo -e "  ${GREEN}✓ Logged in as $EMAIL${RESET}"
       SKIP_SIGNUP=true
@@ -274,6 +280,13 @@ AUTHEOF
     echo -e "  ${YELLOW}! Signup failed: $SIGNUP_ERROR${RESET}"
     exit 1
   fi
+
+  # A freshly signed-up account is only an org member if the admin
+  # pre-assigned it, but check anyway so pre-assigned accounts work first try.
+  # Guarded with || echo "" so a network failure here degrades to "no org
+  # detected" instead of tripping set -e and aborting the whole install.
+  VERIFY_DATA=$(curl -s -H "Authorization: Bearer $TOKEN" "$API_BASE/api/buildpartner/verify-token" 2>/dev/null || echo "")
+  ORG_SLUG=$(echo "$VERIFY_DATA" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.org)console.log(d.org)}catch{}" 2>/dev/null)
 fi
 
 echo ""
@@ -295,9 +308,12 @@ else
   MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
 fi
 
+TEAM_PLUGIN_NAME="${PLUGIN_NAME}-team"
+
 debug "MARKETPLACE_SOURCE=$MARKETPLACE_SOURCE"
 debug "MARKETPLACE_NAME=$MARKETPLACE_NAME"
 debug "PLUGIN_NAME=$PLUGIN_NAME"
+debug "TEAM_PLUGIN_NAME=$TEAM_PLUGIN_NAME"
 
 # Current state
 debug "claude version: $(claude --version 2>&1 || echo 'not found')"
@@ -339,7 +355,25 @@ else
   exit 1
 fi
 
-echo -e "  ${GREEN}✓ 3 skills available${RESET}"
+TEAM_INSTALLED=false
+if [ -n "$ORG_SLUG" ] || [ "$FORCE_TEAM" = true ]; then
+  debug "installing team plugin: $TEAM_PLUGIN_NAME@$MARKETPLACE_NAME"
+  if claude plugin list 2>/dev/null | grep -q "$TEAM_PLUGIN_NAME@$MARKETPLACE_NAME"; then
+    claude plugin uninstall "$TEAM_PLUGIN_NAME@$MARKETPLACE_NAME" </dev/null 2>/dev/null || true
+  fi
+  if claude plugin install "$TEAM_PLUGIN_NAME@$MARKETPLACE_NAME" </dev/null; then
+    echo -e "  ${GREEN}✓ Team plugin installed${RESET}"
+    TEAM_INSTALLED=true
+  else
+    echo -e "  ${YELLOW}! Team plugin install failed (rerun the install command to retry)${RESET}"
+  fi
+fi
+
+if [ "$TEAM_INSTALLED" = true ]; then
+  echo -e "  ${GREEN}✓ 5 skills available${RESET}"
+else
+  echo -e "  ${GREEN}✓ 4 skills available${RESET}"
+fi
 echo -e "  ${GREEN}✓ MCP server configured${RESET}"
 
 # Record the completed install server-side so the dashboard's "Install the
@@ -391,13 +425,17 @@ echo -e "${ORANGE}  ╭───────────────────
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  │  You're all set.                             │${RESET}"
 echo -e "${ORANGE}  │                                              │${RESET}"
-echo -e "${ORANGE}  │  3 skills installed                          │${RESET}"
+if [ "$TEAM_INSTALLED" = true ]; then
+  echo -e "${ORANGE}  │  5 skills installed                          │${RESET}"
+else
+  echo -e "${ORANGE}  │  4 skills installed                          │${RESET}"
+fi
 echo -e "${ORANGE}  │                                              │${RESET}"
 echo -e "${ORANGE}  ╰──────────────────────────────────────────────╯${RESET}"
 echo ""
 echo -e "${BOLD}  Next step:${RESET} Start a new Claude Code session and try:"
 echo ""
-echo -e "  ${ORANGE}/bp:expert-advice${RESET}"
+echo -e "  ${ORANGE}/bp-dev:expert-advice${RESET}"
 echo ""
 echo -e "  ${DIM}If you're already in Claude Code, restart the session first.${RESET}"
 echo ""

@@ -1,9 +1,9 @@
 ---
-name: bp:open-dashboard
+name: open-dashboard
 description: "Open my dashboard in the browser, automatically signed in."
 ---
 
-# /bp:open-dashboard
+# /bp-dev:open-dashboard
 
 Open my dashboard in the browser, automatically signed in.
 

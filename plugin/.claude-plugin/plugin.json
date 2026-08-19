@@ -1,6 +1,6 @@
 {
   "name": "bp-dev",
-  "version": "0.11.0",
+  "version": "0.12.5",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -40,7 +40,7 @@
           },
           {
             "type": "command",
-            "command": "day=$(date +%u); if [ \"$day\" = \"1\" ] || [ \"$day\" = \"5\" ]; then printf '{\"systemMessage\":\"IMPROVE SYSTEM REMINDER: Run /bp:improve-system to review your sessions and keep your setup sharp.\"}'; fi",
+            "command": "day=$(date +%u); if [ \"$day\" = \"1\" ] || [ \"$day\" = \"5\" ]; then printf '{\"systemMessage\":\"IMPROVE SYSTEM REMINDER: Run /bp-dev:improve-system to review your sessions and keep your setup sharp.\"}'; fi",
             "timeout": 5
           }
         ]

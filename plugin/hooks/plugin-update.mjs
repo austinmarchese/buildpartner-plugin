@@ -18,9 +18,16 @@ try {
   ensureDir();
   fs.writeFileSync(THROTTLE_FILE, String(Date.now()), "utf8");
 
-  // Spawn detached background update
+  // Spawn detached background update.
+  //
+  // The team plugin is updated only when already installed (grep-gated), never
+  // added: adding it here would break the invariant that a non-org install
+  // stays byte-identical to today. Two team plugin ids exist, prod's
+  // buildpartner-team@buildpartner and dev's bp-dev-team@bp-dev; check and
+  // update each independently with the same grep-gate pattern so an enterprise
+  // dev machine's team plugin also gets refreshed by this hook.
   const cmd =
-    "claude plugin marketplace update 2>/dev/null && claude plugin update buildpartner@buildpartner 2>/dev/null";
+    "claude plugin marketplace update 2>/dev/null && claude plugin update buildpartner@buildpartner 2>/dev/null; claude plugin list 2>/dev/null | grep -q 'buildpartner-team@buildpartner' && claude plugin update buildpartner-team@buildpartner 2>/dev/null; claude plugin list 2>/dev/null | grep -q 'bp-dev-team@bp-dev' && claude plugin update bp-dev-team@bp-dev 2>/dev/null";
   const child = spawn("sh", ["-c", cmd], {
     detached: true,
     stdio: "ignore",
