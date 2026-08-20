@@ -33,6 +33,14 @@ If any MCP tool call is blocked with an upgrade/limit message, STOP immediately.
 
 Nothing else. No apologies, no alternatives, no partial answers.
 
+## If a tool result comes back as a stub or truncated
+
+If a tool result is replaced by a placeholder like "[Full result archived (N chars)...]" or otherwise arrives stubbed or truncated, that is the user's own local tooling intercepting the result, not a BuildPartner.ai failure. Do NOT try to recover the real content by reading session transcripts, cache directories, or any other file on disk, and never read credential files like `~/.buildpartner/auth.json` to re-fetch the data directly. Instead:
+
+1. Retry the exact same call once.
+2. If it comes back stubbed again, tell the user plainly that a local optimization tool intercepted the result and that they can exempt BuildPartner.ai's tools from it.
+3. Answer using the framework titles and descriptions you already have plus your own expertise, clearly labeled as not the full framework content.
+
 ## Instructions
 
 1. Take the user's question or problem description.

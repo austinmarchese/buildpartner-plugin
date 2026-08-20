@@ -21,6 +21,17 @@
         "productivity",
         "skills"
       ]
+    },
+    {
+      "name": "buildpartner-team",
+      "source": "./plugin-team",
+      "description": "BuildPartner.ai team plan: ask your company's founder and leadership directly inside Claude Code.",
+      "version": "0.12.5",
+      "category": "productivity",
+      "tags": [
+        "team",
+        "coaching"
+      ]
     }
   ]
 }
