@@ -57,12 +57,15 @@ For each step `N` from 1 to `stepCount`, fetch it, then in order:
    - **Single vs multi-select.** Match the question to reality. Set `multiSelect: true` when more than one option can legitimately apply at once, i.e. the answer fills a *list* or the question reads like "which of these…" / "select all that apply" (e.g. picking several topics for a search to cover, several files to touch). Keep the default single-select when exactly one answer fills the slot. If the input itself declares `multi: true`, honor it. When a multi-select answer comes back with several values, join them naturally into the `{key}` slot (comma/newline as the snippet expects).
    - Substitute each answer into the `snippet` wherever `{key}` appears.
 
-3. **Show and confirm.** Show the filled `snippet` and say what running it will do. Then use **AskUserQuestion** (header `Step N`) with options **"Run it"** (mark recommended), **"Tweak first"**, and **"Skip this step"**. Do nothing that reads or changes their project until they choose "Run it". This is a walkthrough, not a takeover, they confirm each step.
+3. **Translate to their machine, then show and confirm.** Snippets are written once, usually against macOS. Before you show a filled snippet, rewrite it for the platform and shell you are actually running in (your environment tells you which): paths, openers, package managers, schedulers, permissions, quoting. Keep the intent identical. Show only the translated version, as if it had been written for them, and do not explain the translation. One exception: if a tool the step names has no route on their platform, say so in one line before they confirm, then either substitute the closest tool that reaches the same outcome or recommend "Skip this step".
+
+   Show the filled `snippet` and say what running it will do. Then use **AskUserQuestion** (header `Step N`) with options **"Run it"** (mark recommended), **"Tweak first"**, and **"Skip this step"**. Do nothing that reads or changes their project until they choose "Run it". This is a walkthrough, not a takeover, they confirm each step.
 
 4. **Run it** once confirmed:
    - `mode: "command"` → run it in the shell and show the output.
    - `mode: "prompt"` → execute it as your own action against their project (make the edit, run the analysis), adapted to their actual files. Show what changed (the diff, the new file, the result).
    - **Do the work you can do.** A snippet is often a mix: some lines you can run, some only they can. Run every line you can run yourself and show the output. Hand them only the lines that genuinely need their terminal (`/usage`, `/context`, `/cost`, any interactive panel), one at a time, and say exactly what to look for in it. Never hand back the whole block and ask them to sort it out.
+   - If the step added or changed a hook, an agent, or an MCP server, tell them to restart Claude Code before the verify runs. Those load at session start.
 
 5. **Ask for anything only they can see, as options, never as prose.** When a step depends on something you cannot observe (a number in an interactive panel, a value in their account, what a tool printed on their screen), do not write out questions and wait for them to type paragraphs. Use **AskUserQuestion**, one question per call, with options you generate from the plausible real answers for *their* setup (for "what's eating your limit": the models and tools their config actually shows), plus:
    - an option that means **"I'll paste it"** — if they paste raw output or drop a screenshot, you pull the numbers out of it, they never hand-extract; and
@@ -76,6 +79,8 @@ For each step `N` from 1 to `stepCount`, fetch it, then in order:
 
    If the criterion is something only the user can see (a panel reading, an account value), a sub-agent cannot check it. Confirm it with them directly using the option-card pattern in point 5, echo back what they reported, and move on.
 
+   If the step was skipped because it has no route on their platform, do not verify it. Note it as not available on their platform and move on.
+
 7. **Offer the next step. Every time, without being asked.** Never end a turn with the step done and no way forward. Close with one line on what just happened, then immediately use **AskUserQuestion** (header `Step N of {stepCount}`) with:
    - **"Next: <title of step N+1>"**, marked recommended — fetch step N+1 and start it
    - **"Redo this step"**
@@ -87,7 +92,7 @@ Between steps the user can tweak, skip, or go deeper. Match their pace. If they 
 
 ## 4. Land the outcome
 
-When the steps are done, run the build's `outcome` as a checklist and confirm each item is actually true in their project. Call out anything not done.
+When the steps are done, run the build's `outcome` as a checklist and confirm each item is actually true in their project. Call out anything not done. An item skipped because it has no route on their platform is reported as "not available on <platform>", never as not done.
 
 If the build has a `pluginCta`, offer it as the natural next action (e.g. `/buildpartner:improve-system` for a personalized pass).
 
@@ -104,4 +109,5 @@ Close by pointing forward: more builds live in the dashboard under Builds, and n
 - Verification is a blind check by a fresh sub-agent, never self-grading. Fall back to inline evidence only if sub-agents aren't available.
 - Every step ends with a `Step N of {stepCount}` question offering the next step. The user should never have to ask "what's next?" or type a command to advance. If they had to ask, the step ended wrong.
 - Never make the user answer in prose what you could offer as options. If you need a reading only they can see, generate real candidate options, plus "I'll paste it" and "couldn't run it, skip". Reading a pasted panel dump or screenshot is your job, not theirs.
+- Snippets are shown in the user's platform and shell, translated silently. The user never sees a command written for a different OS, and never a note about the translation.
 - Keep the user driving.
