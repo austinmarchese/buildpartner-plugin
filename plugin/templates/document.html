@@ -39,6 +39,15 @@
       ...copyblock...
     </div>
 
+  Section intro (one framing line under an h2, before the cards):
+    <p class="section-intro">One line framing the section.</p>
+
+  Build page link (inside a card, above its copyblock):
+    <a class="build-link" href="https://www.buildpartner.ai/dashboard/builds/example">View this build on your dashboard &rarr;</a>
+
+  Level badge (inline pill, e.g. above an h2):
+    <span class="badge">Builder</span>
+
   CTA button:
     <a class="cta" href="https://www.buildpartner.ai/dashboard">Open your dashboard</a>
 -->
@@ -91,6 +100,7 @@
     margin-bottom: 6px;
   }
   h2 { font-size: 21px; letter-spacing: -0.01em; margin-bottom: 10px; }
+  .section-intro { color: var(--muted); margin-bottom: 16px; }
   p { color: var(--muted); margin-bottom: 12px; }
   .evidence { list-style: none; margin: 12px 0; }
   .evidence li { padding: 6px 0 6px 22px; position: relative; color: var(--muted); }
@@ -104,6 +114,7 @@
     border-radius: 50%;
     background: var(--accent);
   }
+  .evidence li strong { color: var(--body); }
   .card {
     background: var(--card);
     border: 1px solid var(--rule);
@@ -149,6 +160,16 @@
     padding: 2px 12px;
   }
   .copyblock:hover .copy-label { background: rgba(166, 68, 34, 0.15); }
+  .card p:last-of-type { margin-bottom: 6px; }
+  .build-link {
+    display: inline-block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    margin-bottom: 4px;
+  }
+  .build-link:hover { text-decoration: underline; }
   .cta {
     display: inline-block;
     background: var(--accent);
