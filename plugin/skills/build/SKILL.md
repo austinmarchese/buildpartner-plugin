@@ -59,6 +59,8 @@ For each step `N` from 1 to `stepCount`, fetch it, then in order:
 
 3. **Translate to their machine, then show and confirm.** Snippets are written once, usually against macOS. Before you show a filled snippet, rewrite it for the platform and shell you are actually running in (your environment tells you which): paths, openers, package managers, schedulers, permissions, quoting. Keep the intent identical. Show only the translated version, as if it had been written for them, and do not explain the translation. One exception: if a tool the step names has no route on their platform, say so in one line before they confirm, then either substitute the closest tool that reaches the same outcome or recommend "Skip this step".
 
+   **Fit the lever to the project, too.** A step is written for a typical project and names a lever: compress command output, pin agents to a smaller model, script a deterministic step. Before you show the snippet, check that lever exists here. If it does not (a documents-only workspace has no command output, a fresh folder has no agents), do not walk them through a step that cannot apply. Pick the nearest move in this project that reaches the step's outcome, say in one line what you are doing instead and why, and show that as the snippet. The verify gate then checks the step's outcome against what you actually did. If nothing in this project can reach the outcome, say so in one line and recommend "Skip this step".
+
    Show the filled `snippet` and say what running it will do. Then use **AskUserQuestion** (header `Step N`) with options **"Run it"** (mark recommended), **"Tweak first"**, and **"Skip this step"**. Do nothing that reads or changes their project until they choose "Run it". This is a walkthrough, not a takeover, they confirm each step.
 
 4. **Run it** once confirmed:
@@ -94,6 +96,8 @@ Between steps the user can tweak, skip, or go deeper. Match their pace. If they 
 
 When the steps are done, run the build's `outcome` as a checklist and confirm each item is actually true in their project. Call out anything not done. An item skipped because it has no route on their platform is reported as "not available on <platform>", never as not done.
 
+Then show the build's `nextSteps` from the orientation, each title with its one-line body, as the follow-on work. They are authored for this build and are the difference between "done" and "done, and here is what to do next week". If the build has none, skip this.
+
 If the build has a `pluginCta`, offer it as the natural next action (e.g. `/buildpartner:improve-system` for a personalized pass).
 
 Close by pointing forward: more builds live in the dashboard under Builds, and new ones land there as we ship them. Invite them back for the next one.
@@ -109,5 +113,6 @@ Close by pointing forward: more builds live in the dashboard under Builds, and n
 - Verification is a blind check by a fresh sub-agent, never self-grading. Fall back to inline evidence only if sub-agents aren't available.
 - Every step ends with a `Step N of {stepCount}` question offering the next step. The user should never have to ask "what's next?" or type a command to advance. If they had to ask, the step ended wrong.
 - Never make the user answer in prose what you could offer as options. If you need a reading only they can see, generate real candidate options, plus "I'll paste it" and "couldn't run it, skip". Reading a pasted panel dump or screenshot is your job, not theirs.
+- A step's lever must exist in this project. When it does not, substitute the nearest move that reaches the step's outcome and say so in one line; never run a step that cannot apply just to pass it.
 - Snippets are shown in the user's platform and shell, translated silently. The user never sees a command written for a different OS, and never a note about the translation.
 - Keep the user driving.

@@ -2,10 +2,10 @@
 # BuildPartner.ai Plugin Installer
 #
 # Production (from GitHub marketplace):
-#   curl -fsSL https://buildpartner.ai/install.sh | sh
+#   curl -fsSL https://buildpartner.ai/install.sh | bash
 #
 # Local dev (from local repo clone):
-#   curl -fsSL https://buildpartner.ai/install.sh | sh -s -- --local
+#   curl -fsSL https://buildpartner.ai/install.sh | bash -s -- --local
 #   OR: ./plugin/scripts/install.sh --local
 #
 # Installs the BuildPartner plugin into Claude Code via the marketplace system.
@@ -151,6 +151,26 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 echo -e "  ${GREEN}✓ Claude Code found${RESET}"
 
+# ── Check Git ────────────────────────────────────────────────────
+# Claude Code fetches plugin marketplaces with `git clone` and updates them
+# with `git pull`, so `claude plugin marketplace add` below fails without it
+# ("Command 'git' not found"). Mac gets git with the Xcode command line tools;
+# `xcode-select --install` opens a GUI installer we cannot wait on, so explain
+# and stop rather than half-install.
+if ! command -v git >/dev/null 2>&1; then
+  echo -e "  ${YELLOW}✗ Git not found${RESET}"
+  echo ""
+  echo "  Claude Code uses Git to download plugins. Install it, then re-run this command:"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo -e "    ${ORANGE}xcode-select --install${RESET}"
+  else
+    echo -e "    ${ORANGE}sudo apt install git${RESET}   ${DIM}(or your distro's package manager)${RESET}"
+  fi
+  echo ""
+  exit 1
+fi
+echo -e "  ${GREEN}✓ Git found${RESET}"
+
 # ── Step 1: Account ─────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}  [1/3] Create your account${RESET}"
@@ -201,17 +221,20 @@ if [ -f "$AUTH_FILE" ] && [ "${SKIP_SIGNUP}" != "true" ]; then
 fi
 
 if [ "${SKIP_SIGNUP}" != "true" ]; then
-  if [ -t 0 ]; then
+  # Under `curl | bash` stdin is the script itself, so prompt on the
+  # controlling terminal instead. Only give up when there is no terminal
+  # at all (CI, cron, a redirected shell).
+  if ( : < /dev/tty ) 2>/dev/null; then
     printf "        Email: "
-    read -r EMAIL
+    read -r EMAIL < /dev/tty
 
     while [ -z "$EMAIL" ] || ! echo "$EMAIL" | grep -q "@"; do
       echo -e "  ${YELLOW}      Enter a valid email${RESET}"
       printf "        Email: "
-      read -r EMAIL
+      read -r EMAIL < /dev/tty
     done
   else
-    echo -e "  ${YELLOW}! Non-interactive mode. Run this in a terminal.${RESET}"
+    echo -e "  ${YELLOW}! No terminal to prompt on. Run this in a terminal, or pass --token.${RESET}"
     exit 1
   fi
 
@@ -435,7 +458,7 @@ echo -e "${ORANGE}  ╰───────────────────
 echo ""
 echo -e "${BOLD}  Next step:${RESET} Start a new Claude Code session and try:"
 echo ""
-echo -e "  ${ORANGE}/buildpartner:expert-advice${RESET}"
+echo -e "  ${ORANGE}/buildpartner:build${RESET}"
 echo ""
 echo -e "  ${DIM}If you're already in Claude Code, restart the session first.${RESET}"
 echo ""

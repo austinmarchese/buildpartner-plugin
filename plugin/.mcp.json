@@ -2,7 +2,11 @@
   "mcpServers": {
     "tools": {
       "command": "npx",
-      "args": ["-y", "buildpartner", "serve"]
+      "args": [
+        "-y",
+        "buildpartner@0.12.6",
+        "serve"
+      ]
     }
   }
 }
