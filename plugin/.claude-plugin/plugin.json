@@ -1,6 +1,6 @@
 {
   "name": "buildpartner",
-  "version": "0.12.6",
+  "version": "0.12.7",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -19,7 +19,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "buildpartner@0.12.6",
+        "buildpartner@0.12.7",
         "serve"
       ]
     }

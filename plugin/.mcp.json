@@ -4,7 +4,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "buildpartner@0.12.6",
+        "buildpartner@0.12.7",
         "serve"
       ]
     }
