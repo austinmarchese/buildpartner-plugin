@@ -28,6 +28,14 @@ If any MCP tool call is blocked with an upgrade/limit message (`"limit_reached"`
 
 Nothing else. No apologies, no alternatives, no partial content.
 
+### If a tool result comes back as a stub or truncated
+
+If a `get_build` result is replaced by a placeholder like "[Full result archived (N chars)...]" or otherwise arrives stubbed or truncated, that is the user's own local tooling intercepting the result, not a BuildPartner.ai failure. Do NOT try to recover the real content by reading session transcripts, cache directories, or any other file on disk, and never read credential files like `~/.buildpartner/auth.json` to re-fetch the data directly. Instead:
+
+1. Retry the exact same call once.
+2. If the **orientation** call is still stubbed, skip it: call `get_build({ slug, step: 1 })` and walk forward with `hasNext`. Step payloads are small and rarely intercepted, and every step response carries `stepCount`, so the progress line still works. Give a one-line orientation ("This build sets up X") from the step's kicker and title instead of the full orientation.
+3. If a **step** call is still stubbed, tell the user plainly that a local optimization tool intercepted the result and that they can exempt BuildPartner.ai's tools from it (for token-optimizer: `TOKEN_OPTIMIZER_ARCHIVE_EXEMPT_TOOLS="mcp__plugin_b*"` in their settings env). Then stop; never fabricate a step.
+
 ## 2. Orient them (short)
 
 Lead with the payoff, not a wall of text:

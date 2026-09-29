@@ -173,7 +173,7 @@ echo -e "  ${GREEN}✓ Git found${RESET}"
 
 # ── Step 1: Account ─────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}  [1/3] Create your account${RESET}"
+echo -e "${BOLD}  [1/3] Log in or create your account${RESET}"
 echo ""
 
 # If --token provided, verify and use it (skips email prompt entirely)
@@ -201,7 +201,7 @@ AUTHEOF
     echo -e "  ${GREEN}✓ Logged in as $EMAIL${RESET}"
     SKIP_SIGNUP=true
   else
-    echo -e "  ${YELLOW}! Invalid token. Falling back to email signup.${RESET}"
+    echo -e "  ${YELLOW}! Invalid token. Falling back to email login.${RESET}"
     echo ""
   fi
 fi
@@ -238,71 +238,70 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
     exit 1
   fi
 
-  USERNAME=$(echo "$EMAIL" | cut -d@ -f1 | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')
-  if [ ${#USERNAME} -lt 2 ]; then
-    USERNAME="user-$(head -c 6 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 6)"
-  fi
+  EMAIL=$(echo "$EMAIL" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
-  SIGNUP_RESULT=$(curl -s -X POST "$API_BASE/api/buildpartner/signup" \
+  # Email-only login: the server emails a confirm link and we wait for the
+  # click. Same path for new and existing emails; a new account is created
+  # only when the link is confirmed, so nobody can claim an inbox they don't
+  # own. The token is written to auth.json and never printed.
+  START_BODY=$(BP_EMAIL="$EMAIL" node -e 'console.log(JSON.stringify({email:process.env.BP_EMAIL,source:"installer"}))')
+  START_RESULT=$(curl -s -X POST "$API_BASE/api/buildpartner/login/start" \
     -H "Content-Type: application/json" \
-    -d "{\"email\":\"$EMAIL\",\"username\":\"$USERNAME\"}" 2>/dev/null || echo '{"error":"network"}')
+    -d "$START_BODY" 2>/dev/null || echo '{"error":"network"}')
 
-  SIGNUP_TOKEN=$(echo "$SIGNUP_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.token)console.log(d.token)}catch{}" 2>/dev/null)
-  SIGNUP_ERROR=$(echo "$SIGNUP_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.error)console.log(d.error)}catch{}" 2>/dev/null)
+  LOGIN_ID=$(echo "$START_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.login_id)console.log(d.login_id)}catch{}" 2>/dev/null)
+  LOGIN_CODE=$(echo "$START_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.code)console.log(d.code)}catch{}" 2>/dev/null)
+  START_ERROR=$(echo "$START_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.error)console.log(d.error)}catch{}" 2>/dev/null)
 
-  if [ -n "$SIGNUP_TOKEN" ]; then
-    mkdir -p "$BP_DIR"
-    cat > "$AUTH_FILE" << AUTHEOF
-{
-  "email": "$EMAIL",
-  "username": "$USERNAME",
-  "token": "$SIGNUP_TOKEN",
-  "profile_url": "$API_DOMAIN/$USERNAME",
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-}
-AUTHEOF
-    echo -e "  ${GREEN}✓ Account created${RESET}"
-    TOKEN="$SIGNUP_TOKEN"
-  elif echo "$SIGNUP_ERROR" | grep -qi "username"; then
-    for i in 1 2 3; do
-      SUFFIX=$(head -c 4 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 4)
-      USERNAME="${USERNAME}-${SUFFIX}"
-      SIGNUP_RESULT=$(curl -s -X POST "$API_BASE/api/buildpartner/signup" \
-        -H "Content-Type: application/json" \
-        -d "{\"email\":\"$EMAIL\",\"username\":\"$USERNAME\"}" 2>/dev/null || echo '{"error":"network"}')
-      SIGNUP_TOKEN=$(echo "$SIGNUP_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.token)console.log(d.token)}catch{}" 2>/dev/null)
-      if [ -n "$SIGNUP_TOKEN" ]; then
-        mkdir -p "$BP_DIR"
-        cat > "$AUTH_FILE" << AUTHEOF
-{
-  "email": "$EMAIL",
-  "username": "$USERNAME",
-  "token": "$SIGNUP_TOKEN",
-  "profile_url": "$API_DOMAIN/$USERNAME",
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-}
-AUTHEOF
-        echo -e "  ${GREEN}✓ Account created${RESET}"
-        TOKEN="$SIGNUP_TOKEN"
-        break
-      fi
-    done
-    if [ -z "$TOKEN" ]; then
-      echo -e "  ${YELLOW}! Could not create account. Try again later.${RESET}"
-      exit 1
+  if [ -z "$LOGIN_ID" ]; then
+    if [ "$START_ERROR" = "network" ] || [ -z "$START_ERROR" ]; then
+      echo -e "  ${YELLOW}! Could not reach ${API_DOMAIN}. Check your connection and try again.${RESET}"
+    else
+      echo -e "  ${YELLOW}! $START_ERROR${RESET}"
     fi
-  elif echo "$SIGNUP_ERROR" | grep -qi "email"; then
-    echo -e "  ${YELLOW}! This email is already registered.${RESET}"
-    echo -e "  ${DIM}  Reconnect this machine here: $API_BASE/dashboard/login?connect=1${RESET}"
-    echo -e "  ${DIM}  Verify your email there and it gives you the command to paste.${RESET}"
-    exit 1
-  elif echo "$SIGNUP_ERROR" | grep -qi "network"; then
-    echo -e "  ${YELLOW}! Could not reach ${API_DOMAIN}. Check your connection and try again.${RESET}"
-    exit 1
-  else
-    echo -e "  ${YELLOW}! Signup failed: $SIGNUP_ERROR${RESET}"
     exit 1
   fi
+
+  echo ""
+  echo -e "  ${ORANGE}Check your inbox:${RESET} we sent a login link to $EMAIL"
+  echo -e "  ${DIM}Click \"Yes, log me in\" (your phone works too). Code: $LOGIN_CODE${RESET}"
+  echo -e "  ${DIM}Waiting for you to click...${RESET}"
+
+  POLL_BODY=$(BP_LOGIN_ID="$LOGIN_ID" node -e 'console.log(JSON.stringify({login_id:process.env.BP_LOGIN_ID}))')
+  # 15 minute link, polled every 3 seconds.
+  for i in $(seq 1 300); do
+    sleep 3
+    POLL_RESULT=$(curl -s -X POST "$API_BASE/api/buildpartner/login/poll" \
+      -H "Content-Type: application/json" \
+      -d "$POLL_BODY" 2>/dev/null || echo "")
+    POLL_STATUS=$(echo "$POLL_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.status)console.log(d.status)}catch{}" 2>/dev/null)
+    if [ "$POLL_STATUS" = "approved" ]; then
+      TOKEN=$(echo "$POLL_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.token)console.log(d.token)}catch{}" 2>/dev/null)
+      USERNAME=$(echo "$POLL_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf-8'));if(d.username)console.log(d.username)}catch{}" 2>/dev/null)
+      break
+    fi
+    if [ "$POLL_STATUS" = "expired" ]; then
+      break
+    fi
+  done
+
+  if [ -z "$TOKEN" ]; then
+    echo -e "  ${YELLOW}! The login link expired. Re-run this command for a new one.${RESET}"
+    exit 1
+  fi
+
+  mkdir -p "$BP_DIR"
+  cat > "$AUTH_FILE" << AUTHEOF
+{
+  "email": "$EMAIL",
+  "username": "$USERNAME",
+  "token": "$TOKEN",
+  $AUTH_API_LINE
+  "profile_url": "$API_DOMAIN/$USERNAME",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+}
+AUTHEOF
+  echo -e "  ${GREEN}✓ Logged in as $EMAIL${RESET}"
 
   # A freshly signed-up account is only an org member if the admin
   # pre-assigned it, but check anyway so pre-assigned accounts work first try.
