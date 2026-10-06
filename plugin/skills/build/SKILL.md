@@ -91,8 +91,8 @@ For each step `N` from 1 to `stepCount`, fetch it, then in order:
 
    If the step was skipped because it has no route on their platform, do not verify it. Note it as not available on their platform and move on.
 
-7. **Offer the next step. Every time, without being asked.** Never end a turn with the step done and no way forward. Close with one line on what just happened, then immediately use **AskUserQuestion** (header `Step N of {stepCount}`) with:
-   - **"Next: <title of step N+1>"**, marked recommended — fetch step N+1 and start it
+7. **Offer the next step. Every time, without being asked.** Never end a turn with the step done and no way forward. Close with one line on what just happened, then immediately use **AskUserQuestion** (header `Step N of {stepCount}`). Name both steps in plain words, up to 6 words each, taken from this step's `data.title` and the response's `nextTitle`: the question reads **"Done: <this step>. Next: <next step>?"** (for example "Done: Find where your tokens leak. Next: Cut what loads every session?"). Never ask "Step N is done. Run step N+1 next?": a number alone tells them nothing. Clarity over creativity: shorten a title, never rename it. Options:
+   - **"Next step"**, marked recommended, with the full `nextTitle` as its description — fetch step N+1 and start it
    - **"Redo this step"**
    - **"Stop here"** — and tell them the exact command to resume later: `/buildpartner:build <slug>`, plus that they can say "start at step N+1"
 
