@@ -1,6 +1,6 @@
 {
   "name": "buildpartner-team",
-  "version": "0.13.3",
+  "version": "0.13.2",
   "description": "BuildPartner.ai team plan: ask your company's founder and leadership directly inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
