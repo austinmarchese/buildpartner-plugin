@@ -1,6 +1,26 @@
 ---
 name: improve-system
 description: "Keep your system sharp. Reviews your setup, captures learnings, audits for rot, recaps your sessions. Run it regularly to keep improving."
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Read(~/.claude/**)
+  - Read(~/.buildpartner/auth.json)
+  - Write(.buildpartner/**)
+  - Edit(.buildpartner/**)
+  - Write(.claude/skills/**)
+  - Edit(.claude/skills/**)
+  - Write(CLAUDE.md)
+  - Edit(CLAUDE.md)
+  - Write(**/*.md)
+  - Edit(**/*.md)
+  - Bash(open:*)
+  - Bash(git log:*)
+  - Bash(mkdir:*)
+  - Bash(mv:*)
+  - mcp__plugin_bp-dev_tools__feed_run
+  - mcp__plugin_bp-dev_tools__publish_command_center
 ---
 
 # /bp-dev:improve-system
@@ -439,7 +459,7 @@ Apply only what they approve. Never auto-delete without explicit approval.
 
 The user's self-improving system. One run does three things: it carries out what they approved on their BuildPartner.ai dashboard, makes the small fixes on its own, and sends the bigger suggestions to their Feeds as short cards that wait for a yes or no. With the `apply` argument it only carries out what they approved (see "Apply only").
 
-A loop run is often started by a Local Routine with nobody watching, so it never stops to ask a question. Anything only the user can answer becomes a `question` card.
+A loop run is often started by a Local Routine with nobody watching, so it never stops to ask a question. Anything only the user can answer becomes a `question` card. The one exception is the follow-up the finish result carries after the account's first run (Step 11): that run was started by hand, from setup.
 
 #### The calls
 
@@ -796,6 +816,8 @@ Review them here: {inbox_url}
 - When nothing was applied, fixed or suggested: "Nothing needed changing this run." and the link.
 - Print `inbox_url` exactly as it came. Never print the token.
 
+**When the finish result has `follow_up`**: this was the account's first run, and the person who started it is there. After the summary, ask `follow_up.question` with AskUserQuestion, one option per entry in `follow_up.options` (its `label` and `description`, the first marked recommended). When the option they pick has a `prompt`, do what that prompt says, as if they had typed it. With a `prompt` of `null`, say nothing more. Never ask when the result has no `follow_up`.
+
 #### Apply only
 
 `/bp-dev:improve-system apply` carries out what the user decided and nothing else. It is free, and it is the command their dashboard hands them after they decide their cards.
@@ -831,7 +853,7 @@ If an `feed_run` or `publish_command_center` result is replaced by a placeholder
 #### Loop rules
 
 - Three calls at most: one start, one finish, one publish. Never call start twice in one run.
-- Never ask the user a question in a loop run. What only they can answer is a `question` card. The one time a loop run stops for them is when sharing is not on yet.
+- Never ask the user a question in a loop run. What only they can answer is a `question` card. A loop run stops for them only when sharing is not on yet, or to ask the `follow_up` the finish result carries after their first run.
 - Never send conversation text, file contents or what a skill contains. Cards are your own short summaries.
 - When names are hidden, every person and company name is a placeholder and every skill name is real.
 - Only change files inside this project. Small fixes touch the knowledge base only, never `raw/`, a skill or `CLAUDE.md`.
