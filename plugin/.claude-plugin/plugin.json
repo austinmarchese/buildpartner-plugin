@@ -19,7 +19,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "buildpartner@0.14.0-dev.20261012094000",
+        "buildpartner@0.14.0-dev.20261012102533",
         "serve"
       ]
     }
