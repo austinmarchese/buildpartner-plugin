@@ -786,7 +786,7 @@ The Command Center is the page that shows the user's skills by department, what 
 
    For a skill that is new: `id` is the `name` in its frontmatter, or the folder name when it has none. `label` is a short plain name of 2 to 5 words, at most 80 characters. `description` is one plain sentence on what the user gets when it runs, at most 200 characters. `department` is the `id` of the one department it fits, or `null`. `command` is `/` followed by the `id`. `input` is `{ "label": "..." }` only when the skill needs one piece of text on each run, otherwise `null`. `schedule` is `null`.
 
-   Never invent or change a schedule. Routines can't be read from this project, so the user declares them when they run `/bp-dev:command-center`.
+   Never invent or change a schedule. Schedules come from the user's Local Routines, read when they run `/bp-dev:command-center`; a loop run does not read them.
 3. **Use real names.** Hiding names covers the cards in their feeds and nothing else. The Command Center shows their company, departments and goals as they named them.
 4. **Write the layout** to `.buildpartner/command-center.json`, then call `publish_command_center` once with `layout` set to exactly what you wrote. If no skills are left to list, do not publish.
 5. **Act on the result.** `ok` is true: keep `skills`, `added` and `removed` for the summary. Anything else (`needs_setup`, `limit_reached`, an `error`): do not call it again and do not open anything. The run itself is already saved. Put the result's `message` or `error` in the summary in one line.

@@ -30,6 +30,8 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 
 2. **Find this project's skills.** Each folder in `.claude/skills/` at the top of this project that holds a `SKILL.md` is one skill. Read its frontmatter (`name`, `description`, `argument-hint`) and enough of the body to know what it does and what it needs. Count only this project's skills: not skills from plugins, and not skills in the user's home folder.
 
+   Then read the user's Local Routines (step 6 says where). A routine whose working folder is this project and whose command is not one of this project's skills is still part of how this business runs, so it goes on the page too: one entry per routine, `id` the routine's id, `label` from its display name, `description` from what its prompt does, `command` the first `/command` line of its prompt (or the prompt's first line, cut to one sentence, when it has no slash command), and `schedule` from its cron. Routines whose working folder is another project are left out.
+
    Leave out:
    - folders whose name starts with `_` or `.`
    - any skill that describes itself as an internal module of another skill, or says not to run it directly (for example "INTERNAL INGEST MODULE, do not invoke directly; run /sync-external-data"). The user never runs those by hand.
@@ -56,13 +58,19 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
    - **command**: the exact text the user pastes into Claude to run it. Usually `/<id>`. When they always run it with the same extra words, add them after a space (`/sync-external-data SEND 1`). It must be `/<id>` alone, or `/<id>` followed by a space and the rest. Anything else is replaced by `/<id>`.
    - **input**: only when the skill needs one piece of text from the user on each run (a name, a link, a question). Give the text box a short label, such as "Who is the call with?". `null` when the skill takes nothing, or only fixed words like SEND.
 
-6. **Ask ONE question about routines.** Local Routines live in the Claude desktop app and can't be read from this project, so the user tells you. Before asking, collect what is already written down: the schedules in the last layout, a schedules file in the project, a skill that says when it runs. Then ask once, in plain text (the answer is a list, so no option cards). Show the skills by department with any schedule you already have, and ask which ones run on a routine and when:
+6. **Read the routines, then ask one question to confirm.** Local Routines live in the Claude desktop app, and they can be read from this computer:
+   - `~/.claude/scheduled-tasks/<id>/SKILL.md` holds each routine's prompt (its `name` and `description` frontmatter, then the command it runs).
+   - The app's store, `~/Library/Application Support/Claude/claude-code-sessions/*/*/scheduled-tasks.json` on macOS (`%APPDATA%\Claude\claude-code-sessions\*\*\scheduled-tasks.json` on Windows), holds each routine's `id`, `displayName`, `cronExpression`, `enabled` and `cwd`. A routine with no `cronExpression` is "Manual only": it runs on demand.
 
-   > "Here is what will show in your Command Center: [skills by department, with the schedules you already have]. Which of these run on a routine, and when? For example: 'sync-external-data every day at 8am, company-goal-update Mondays at 8am with SEND'. Say 'none' if nothing is scheduled yet."
+   Read both. Keep the routines whose `cwd` is this project. Match each to a skill by the `/command` in its prompt: that skill's `schedule` comes from the cron (`0 8 * * *` is daily at 08:00; `0 9 * * 1` is weekly, Monday, 09:00; a day-of-month is monthly), and its `command` is the exact command line the prompt runs, with its arguments. A routine that matches no skill becomes its own entry (step 2). A disabled routine counts as on demand. If neither place can be read, fall back to what is written down: the schedules in the last layout, a schedules file in the project, a skill that says when it runs.
 
-   On an update, show the schedules from the last layout and ask what changed, so "no changes" is a full answer.
+   Then ask once, in plain text, only to confirm. Show the skills by department with the schedules you found, and ask what is wrong, so "looks right" is a full answer:
 
-   Take the answer as given and ask nothing more. A routine with no time gets `time: null`. Every skill they did not name runs on demand (`schedule: null`). If their answer also corrects a label, a department or a command, apply it.
+   > "Here is what will show in your Command Center: [skills by department, with each routine's schedule]. I read the routines from your Claude desktop app. Anything wrong or missing? Say 'looks right' to go on."
+
+   Never ask the user to list what the store already says. On an update, show what changed since the last layout.
+
+   Take the answer as given and ask nothing more. If it corrects a schedule, a label, a department or a command, apply it. Never invent a schedule the store or the user did not give.
 
 7. **Read the company goals and the business profile.** If the knowledge base has company goals (a goals page in `wiki/`, or wherever this project keeps them), list each one with its target and deadline. For a goal's current number, use the newest number saved in the knowledge base for that goal, such as the history their goal update keeps. Only read: do not pull fresh numbers from connections and do not estimate. A goal with no saved number gets `value: null`. When no company goals are written down, `goals` is an empty list. Do not ask about goals.
 
