@@ -582,6 +582,8 @@ Write `rules` to `.buildpartner/rules.json` as `{ "updated_at": "<now>", "rules"
 
 #### Step 3: Carry out what they decided
 
+**Where the change lands.** Before the first edit, check whether this session is in a git worktree: `git rev-parse --git-dir` and `git rev-parse --git-common-dir` give different paths in a worktree. In a worktree, say so in one line before applying: "This session is on branch {branch} in a worktree. The changes land on that branch and are not live in your main checkout until it is merged." Then apply here anyway (never write to another checkout: a safety hook may refuse it, and it is not this session's tree). In the summary, repeat where they landed. After any new or changed skill, the summary tells them to run `/reload-skills` so Claude sees it.
+
 `decisions` holds every card the user approved or answered that is not applied on this computer yet. They come from all of their feeds and arrive the same way: the loop's own suggestions (`source: "skill"`), cards their coach wrote (`"coach"`), and answers they sent over from Ask the experts (`"expert"`). The user already said yes on their dashboard. Do not ask again.
 
 Each one has `card_id`, `feed`, `source`, `type`, `target`, `title`, `status` (`"approved"` or `"answered"`), `answer_key` and `prompt`. For each one:
@@ -826,6 +828,7 @@ Review them here: {inbox_url}
 - When a decision was not applied, or the Command Center was not refreshed: say which and why, in one line each.
 - When nothing was applied, fixed or suggested: "Nothing needed changing this run." and the link.
 - Print `inbox_url` exactly as it came. Never print the token.
+- When a skill was built, changed or retired: add "Run `/reload-skills` so Claude picks it up." and, in a worktree, "These landed on branch {branch}; merge it to make them live."
 - Say "suggestions" to the user, never "cards". A card is the dashboard's word for one suggestion; in this summary and in any other line you print, it is a suggestion.
 
 **When the finish result has `follow_up`**: this was the account's first run, and the person who started it is there. After the summary, ask `follow_up.question` with AskUserQuestion, one option per entry in `follow_up.options` (its `label` and `description`, the first marked recommended). When the option they pick has a `prompt`, do what that prompt says, as if they had typed it. With a `prompt` of `null`, say nothing more. Never ask when the result has no `follow_up`.
