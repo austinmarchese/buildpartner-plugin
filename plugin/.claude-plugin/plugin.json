@@ -1,6 +1,6 @@
 {
   "name": "bp-dev",
-  "version": "0.13.3",
+  "version": "0.14.0",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -19,7 +19,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "buildpartner@0.13.3-dev.20261012091502",
+        "buildpartner@0.14.0-dev.20261012094000",
         "serve"
       ]
     }
