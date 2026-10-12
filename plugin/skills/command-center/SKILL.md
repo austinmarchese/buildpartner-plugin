@@ -28,6 +28,8 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 
    If you have no `publish_command_center` tool, tell the user to restart Claude so the BuildPartner.ai plugin finishes updating, then run this again. Stop here.
 
+1b. **Say what this will do**, in two lines, before reading anything: "I will read this project's skills, your routines and your goals, show you the layout, and publish it to your Command Center. Nothing is sent until you confirm the layout." No question yet.
+
 2. **Find this project's skills.** Each folder in `.claude/skills/` at the top of this project that holds a `SKILL.md` is one skill. Read its frontmatter (`name`, `description`, `argument-hint`) and enough of the body to know what it does and what it needs. Count only this project's skills: not skills from plugins, and not skills in the user's home folder.
 
    Then read the user's Local Routines (step 6 says where). A routine whose working folder is this project and whose command is not one of this project's skills is still part of how this business runs, so it goes on the page too: one entry per routine, `id` the routine's id, `label` from its display name, `description` from what its prompt does, `command` the first `/command` line of its prompt (or the prompt's first line, cut to one sentence, when it has no slash command), and `schedule` from its cron. Routines whose working folder is another project are left out.

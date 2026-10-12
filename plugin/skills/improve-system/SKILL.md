@@ -565,6 +565,17 @@ Call `feed_run({ action: "start", mode: "loop" })`. If the result is not a run, 
 | `rejected` | `{ type, target, title }` each: suggestions they said no to (Step 6). |
 | `check` | `{ card_id, type, target, title }` each: earlier fixes to look at again (Step 4). |
 
+#### Step 1b: Say what this run will do
+
+Before any work, print three lines so the user knows what is about to happen. No question, no pause:
+
+```
+This run will:
+- apply {decisions.length} of your decisions (or: nothing is waiting to be applied)
+- read your conversations since {last_loop_at as a date, or "the last 14 days" on a first run}
+- send up to {max_cards} suggestions to your dashboard (or: send nothing new, {queue is full})
+```
+
 #### Step 2: Save the rules
 
 Write `rules` to `.buildpartner/rules.json` as `{ "updated_at": "<now>", "rules": [ ... ] }`, replacing what was there.
@@ -596,7 +607,7 @@ When a decision cannot be carried out as written:
 
 #### Step 4: Read what happened since the last run
 
-Read `last_loop_at` from `state.json`. When there is no file this is the first run here: look back 30 days. Then read, in this order:
+Read `last_loop_at` from `state.json`. When there is no file this is the first run here: look back 14 days (the `retire` check in Step 6 is the one thing that looks further). Then read, in this order:
 
 1. **This project's Claude conversations since then.** The JSONL files changed since `last_loop_at` in the folder under `~/.claude/projects/` that is named after this project's path. Look for what the user asked for, what they corrected, what they told Claude more than once, and which skills ran. Search for those instead of reading whole files, skip tool output, and skip this session.
 2. **This project's own skills**: each folder in `.claude/skills/` at the top of this project that holds a `SKILL.md`. Not skills from plugins, and not skills in the user's home folder.
@@ -817,6 +828,7 @@ Review them here: {inbox_url}
 - When a decision was not applied, or the Command Center was not refreshed: say which and why, in one line each.
 - When nothing was applied, fixed or suggested: "Nothing needed changing this run." and the link.
 - Print `inbox_url` exactly as it came. Never print the token.
+- Say "suggestions" to the user, never "cards". A card is the dashboard's word for one suggestion; in this summary and in any other line you print, it is a suggestion.
 
 **When the finish result has `follow_up`**: this was the account's first run, and the person who started it is there. After the summary, ask `follow_up.question` with AskUserQuestion, one option per entry in `follow_up.options` (its `label` and `description`, the first marked recommended). When the option they pick has a `prompt`, do what that prompt says, as if they had typed it. With a `prompt` of `null`, say nothing more. Never ask when the result has no `follow_up`.
 
