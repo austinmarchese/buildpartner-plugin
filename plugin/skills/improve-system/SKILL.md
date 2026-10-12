@@ -35,7 +35,7 @@ Keep your system sharp. One skill, five modes. Detect the right mode from conver
 | **Experience Capture** | "capture this", "log this", user describes a win/lesson. | Quick structured entry written to knowledge folder. |
 | **Session Review** | "recap my week", "what did I do", bare invocation for returning users. | Weekly recap from session history and git log. |
 | **Audit** | "audit", "health check", "what's stale". | Check for stale rules, unused servers, dead skills, contradictions. |
-| **Loop** | Bare invocation in a project that has skills of its own, "run my self-improving system", "run the loop". The argument `apply`. | Carries out what you approved on your dashboard, makes the small fixes on its own, and sends the bigger suggestions to your Feeds for a yes or no. |
+| **Loop** | Bare invocation in a project that has skills of its own, "run my self-improving system", "run the loop". The argument `apply`, or `routine` (a loop run started by `/bp-dev:run`: identical, except it never asks the first-run follow-up). | Carries out what you approved on your dashboard, makes the small fixes on its own, and sends the bigger suggestions to your Feeds for a yes or no. |
 
 Loop comes first: a bare invocation in a project that has skills of its own runs the Loop. The Setup Review and Session Review defaults apply everywhere else. `/bp-dev:improve-system apply` runs the Loop's apply step only.
 
@@ -831,7 +831,7 @@ Review them here: {inbox_url}
 - When a skill was built, changed or retired: add "Run `/reload-skills` so Claude picks it up." and, in a worktree, "These landed on branch {branch}; merge it to make them live."
 - Say "suggestions" to the user, never "cards". A card is the dashboard's word for one suggestion; in this summary and in any other line you print, it is a suggestion.
 
-**When the finish result has `follow_up`**: this was the account's first run, and the person who started it is there. After the summary, ask `follow_up.question` with AskUserQuestion, one option per entry in `follow_up.options` (its `label` and `description`, the first marked recommended). When the option they pick has a `prompt`, do what that prompt says, as if they had typed it. With a `prompt` of `null`, say nothing more. Never ask when the result has no `follow_up`.
+**When the finish result has `follow_up`**: this was the account's first run, and the person who started it is there. With the `routine` argument nobody is: skip the question and go on. After the summary, ask `follow_up.question` with AskUserQuestion, one option per entry in `follow_up.options` (its `label` and `description`, the first marked recommended). When the option they pick has a `prompt`, do what that prompt says, as if they had typed it. With a `prompt` of `null`, say nothing more. Never ask when the result has no `follow_up`.
 
 #### Apply only
 

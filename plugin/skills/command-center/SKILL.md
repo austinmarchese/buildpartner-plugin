@@ -66,7 +66,9 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 
    Read both. Keep the routines whose `cwd` is this project. Match each to a skill by the `/command` in its prompt: that skill's `schedule` comes from the cron (`0 8 * * *` is daily at 08:00; `0 9 * * 1` is weekly, Monday, 09:00; a day-of-month is monthly), and its `command` is the exact command line the prompt runs, with its arguments. A routine that matches no skill becomes its own entry (step 2). A disabled routine counts as on demand. If neither place can be read, fall back to what is written down: the schedules in the last layout, a schedules file in the project, a skill that says when it runs.
 
-   Then ask once, in plain text, only to confirm. Show the skills by department with the schedules you found, and ask what is wrong, so "looks right" is a full answer:
+   With the `routine` argument (a refresh started by `/bp-dev:run`, nobody watching) there is no question at any step: take what you found, keep every label, department, command and schedule from the last layout where the skill is still there, and go straight to step 8. Only when the project has no last layout and no departments can be told, put every skill under "Other" rather than asking.
+
+   Otherwise ask once, in plain text, only to confirm. Show the skills by department with the schedules you found, and ask what is wrong, so "looks right" is a full answer:
 
    > "Here is what will show in your Command Center: [skills by department, with each routine's schedule]. I read the routines from your Claude desktop app. Anything wrong or missing? Say 'looks right' to go on."
 
@@ -161,7 +163,9 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
    - **Any other `error`.** Tell the user the message, and that their layout is saved in `.buildpartner/command-center.json`, so running this again will publish it. Stop here.
    - **`ok` is true.** Go to step 10.
 
-10. **Open it and say what was published.** Open this address in the user's default browser, replacing BASE_URL and TOKEN_HERE with the values from step 1:
+10. **Open it and say what was published.** With the `routine` argument, do not open the browser: print the one line and the address.
+
+    Normally: Open this address in the user's default browser, replacing BASE_URL and TOKEN_HERE with the values from step 1:
     ```
     BASE_URL/dashboard/executive?part=command-center&t=TOKEN_HERE
     ```
