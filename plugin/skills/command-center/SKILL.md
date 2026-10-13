@@ -13,7 +13,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 
 - **Any project with at least one skill works.** There is no other test. Do not check for a Company Brain, a `CLAUDE.md` or any folder before starting.
 - **Change nothing the user owns.** Never edit `CLAUDE.md`, a skill, a wiki page or any other file of theirs, and never create folders for them. The only file you write is `.buildpartner/command-center.json`.
-- **Send only the layout in step 8.** No file contents, no wiki pages, no session text.
+- **Send only the layout in step 8.** No file contents, no wiki pages, no session text. With the `activity` argument the layout also carries the activity summary of step 7b: counts, times and a few one-line titles in your own words. Never what was said in a session.
 - **One tool call.** `publish_command_center` is called once per run and never retried. Never send the layout any other way.
 - **Never guess.** A schedule the user did not give, a goal number the knowledge base does not hold, or a line about the business it does not hold, stays empty.
 - Say "BuildPartner.ai", in plain words.
@@ -58,7 +58,8 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
    - **description**: one plain sentence saying what the user gets when it runs. Take it from the skill's own description. Leave out trigger phrases and anything written for Claude ("Use when...").
    - **department**: the id of the one department it belongs to. Use the department the skill names or reads from, otherwise the best fit for what it does. `null` when none fits or there are no departments. The page lists those under "Other".
    - **command**: the exact text the user pastes into Claude to run it. Usually `/<id>`. When they always run it with the same extra words, add them after a space (`/sync-external-data SEND 1`). It must be `/<id>` alone, or `/<id>` followed by a space and the rest. Anything else is replaced by `/<id>`.
-   - **input**: only when the skill needs one piece of text from the user on each run (a name, a link, a question). Give the text box a short label, such as "Who is the call with?". `null` when the skill takes nothing, or only fixed words like SEND.
+   - **minutes_saved**: about how many minutes one run saves the user, compared with doing the same thing by hand. A whole number from 1 to 600. Work it out from what the skill does: a drafted reply is about 5, a one-page brief from a few sources about 20 to 30, a weekly report about 40. Keep the number from the last layout when the skill has not changed, so it does not move between runs. `null` when you cannot tell. The user can correct it on the page, and their number wins.
+   - **input**: whenever one piece of text from the user changes what a run produces: a name, a company, a link, a topic, a date range, a question. That covers a skill that needs it and a skill that works without it but does a better job with it (it has an `argument-hint`, reads `$ARGUMENTS`, or opens by asking the user for one thing). Give the text box a short label that asks for exactly that, such as "Who is the call with?" or "What topic?". The page leaves the box empty and copies the plain command when nothing is typed, so an optional input never gets in the way. `null` only when the skill takes nothing from the user, takes only fixed words like SEND, or needs more than one piece of text. A skill that runs on a schedule keeps its fixed command and still gets the box when the rule above fits.
 
 6. **Read the routines, then ask one question to confirm.** Local Routines live in the Claude desktop app, and they can be read from this computer:
    - `~/.claude/scheduled-tasks/<id>/SKILL.md` holds each routine's prompt (its `name` and `description` frontmatter, then the command it runs).
@@ -88,6 +89,24 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 
    Only read. A line the knowledge base does not hold stays empty (`""`, or `[]` for the two lists). Do not work one out from the skills, the company name or anything else, and do not ask about it. Ask the experts on their Command Center answers from these lines, so a guess here becomes wrong advice there.
 
+7b. **Read what happened, only with the `activity` argument.** Without that argument, skip this step and send no `activity`: the user has not said yes to it. BuildPartner.ai hands the argument out only after they turn it on, so never add it yourself and never ask about it.
+
+   Read this project's Claude sessions from the last 30 days. Claude Code keeps one file per session for this folder, in `~/.claude/projects/` under a folder named after this project's full path (every `/` and `.` turned into `-`). Each line is one message with its time. Read enough of each session to answer the five questions below and nothing more, and work all of it out on this computer. What you send is counts, times and a few one-line titles in your own words. Never send, quote or paste what was said in a session, a file's contents, a secret, an email address, a phone number or a link.
+
+   - **skills**: for every skill in the layout, when it last ran and how many times it ran in the last 7 and the last 30 days. A run is the skill being called: its slash command typed, Claude invoking it, or a routine starting it. `last_run_at` is that moment as an ISO time with its timezone offset, or `null` when it did not run in the 30 days. Leave a skill out entirely when you cannot tell whether it ran, for example when its sessions are kept somewhere you cannot read. Do not guess: a skill listed with no run shows as unused, and a scheduled one shows as missed.
+   - **days**: for each of the last 30 days that had a session, how many sessions belonged to each department. A session belongs to the department of the skill it ran, or the one its work was plainly about. One that fits no department counts under `other`. Dates are this computer's local dates.
+   - **open**: up to 10 sessions from the last 14 days that were left unfinished. The work stopped part way (a list half done, a draft never sent, a question from Claude the user never answered) and no later session finished it. A session that simply ended is not unfinished. For each one: `id` is the session's own id (its file name without the ending), `title` is what it was about in a few plain words, `department` as above or `null`, `left_at` is the time of its last message, and `stopped` is one line on where it stopped ("Stopped after drafting email 2 of 5").
+   - **wins**: up to 3 things that got finished in the last 7 days, the ones the user would most want to remember. A `title` in a few plain words, its `department` or `null`, and the `date` it was finished.
+   - **health**: four checks on this project's setup, each with `ok` true or false and a one-line `note` that carries a count where there is one:
+     - `structure`: skills, knowledge and outputs each have their own place.
+     - `skills`: every skill has a name and a clear one-line description, and can be run.
+     - `memory`: Claude has standing instructions for this project, and they are not empty.
+     - `cleanup`: `ok` is false when skills have gone unused for 30 days, or instructions repeat or contradict each other. The note says how many.
+
+   **No names in what you write.** Every `title`, `stopped` and `note` is written without the name of a person or a company, the user's own company included. Say "a client", "a partner" or "a lead" instead. Skill names are fine.
+
+   Nothing here is a question for the user. What you cannot read stays out.
+
 8. **Write the layout** to `.buildpartner/command-center.json` inside this project, creating the `.buildpartner` folder if it is not there. This file is the exact copy of what gets sent. Use exactly this shape and nothing else:
 
    ```json
@@ -108,6 +127,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
          "department": "operations",
          "command": "/sync-external-data SEND 1",
          "input": null,
+         "minutes_saved": 15,
          "schedule": { "label": "Daily 8:00 AM", "cadence": "daily", "time": "08:00", "weekday": null }
        },
        {
@@ -117,6 +137,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
          "department": "sales",
          "command": "/sales-overview",
          "input": { "label": "Who is the call with?" },
+         "minutes_saved": 30,
          "schedule": null
        },
        {
@@ -126,6 +147,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
          "department": "leadership",
          "command": "/company-goal-update SEND",
          "input": null,
+         "minutes_saved": 40,
          "schedule": { "label": "Weekly, Monday 8:00 AM", "cadence": "weekly", "time": "08:00", "weekday": 1 }
        }
      ],
@@ -139,9 +161,35 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
        "website": "harborphysio.com",
        "handles": [{ "platform": "instagram", "handle": "harborphysio" }],
        "watching": ["Bayside Sports Rehab", "@therunningphysio"]
+     },
+     "activity": {
+       "skills": [
+         { "id": "sync-external-data", "last_run_at": "2026-10-13T08:02:00-05:00", "runs_7d": 7, "runs_30d": 29 },
+         { "id": "sales-overview", "last_run_at": "2026-10-12T14:10:00-05:00", "runs_7d": 4, "runs_30d": 11 },
+         { "id": "company-goal-update", "last_run_at": null, "runs_7d": 0, "runs_30d": 0 }
+       ],
+       "days": [
+         { "date": "2026-10-12", "counts": { "sales": 2, "operations": 1 } },
+         { "date": "2026-10-13", "counts": { "operations": 1, "other": 1 } }
+       ],
+       "open": [
+         { "id": "7c1d2f0a-4b1e-4c57-9a56-0e1f2a3b4c5d", "title": "Follow-up emails for a new client", "department": "sales", "left_at": "2026-10-12T16:10:00-05:00", "stopped": "Stopped after drafting email 2 of 5" }
+       ],
+       "wins": [
+         { "title": "A brief now goes out before every sales call", "department": "sales", "date": "2026-10-12" }
+       ],
+       "health": [
+         { "key": "structure", "ok": true, "note": "Skills, knowledge and outputs each have their own place" },
+         { "key": "skills", "ok": true, "note": "All 3 have a clear description" },
+         { "key": "memory", "ok": true, "note": "Claude has standing instructions for this project" },
+         { "key": "cleanup", "ok": false, "note": "1 skill not used in 30 days" }
+       ]
      }
    }
    ```
+
+   - `activity` is there only with the `activity` argument (step 7b). Without the argument, leave the key out of the file altogether. `skills[].id` is a skill id from this file. `counts` keys are department ids from this file, or `other`. At most 31 `days`, 10 `open`, 3 `wins`, and the four `health` keys once each. `title` up to 120 characters, `stopped` and `note` up to 160.
+   - `minutes_saved` on a skill: a whole number from 1 to 600, or `null`.
 
    - `schema` is always `1`.
    - `timezone`: this computer's timezone as an IANA name. Schedule times are in it. Read it from the system. Don't guess it from where the company is.
@@ -174,6 +222,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
     > "Your Command Center is open: {skills} skills in {departments} departments, {how many have a schedule} on a routine, {goals} company goals."
 
     Say "ungrouped" in place of the departments when there are none. Then add only the lines that apply:
+    - With the `activity` argument, when the result's `activity` is true: "Your activity summary went with it: the last run of each skill, what you left unfinished and the time your skills saved are on the page." When it is false: "Your activity summary was not kept, because it is turned off in your Command Center settings."
     - On an update: "New since last time: ..." (`added`) and "No longer listed: ..." (`removed`). Skip both on a first publish.
     - "Not shown, because they run inside another skill: ..." for the skills left out in step 2.
     - "I grouped your skills into {N} departments: {their labels}. Run `/bp-dev:command-center` to change the grouping." when this run made the departments itself (a routine run with no last layout).
