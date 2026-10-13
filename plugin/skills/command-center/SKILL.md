@@ -66,7 +66,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 
    Read both. Keep the routines whose `cwd` is this project. Match each to a skill by the `/command` in its prompt: that skill's `schedule` comes from the cron (`0 8 * * *` is daily at 08:00; `0 9 * * 1` is weekly, Monday, 09:00; a day-of-month is monthly), and its `command` is the exact command line the prompt runs, with its arguments. A routine that matches no skill becomes its own entry (step 2). A disabled routine counts as on demand. If neither place can be read, fall back to what is written down: the schedules in the last layout, a schedules file in the project, a skill that says when it runs.
 
-   With the `routine` argument (a refresh started by `/bp-dev:run`, nobody watching) there is no question at any step: take what you found, keep every label, department, command and schedule from the last layout where the skill is still there, and go straight to step 8. Only when the project has no last layout and no departments can be told, put every skill under "Other" rather than asking.
+   With the `routine` argument (a refresh started by `/bp-dev:run`, nobody watching) there is no question at any step: take what you found, keep every label, department, command and schedule from the last layout where the skill is still there, and go straight to step 8. Only when the project has no last layout and no `wiki/departments/`, group the skills yourself rather than asking: sort them into a few plain departments by what they do (such as Marketing, Sales, Operations and Leadership, or the names this business plainly uses), exactly as "Group my skills" does in step 4. Use as few departments as fit, at most 8, and give each a stable id. A skill that fits none stays `null`. This is the first build, and a page with every skill under "Other" tells the user nothing; they can regroup by running the command by hand.
 
    Otherwise ask once, in plain text, only to confirm. Show the skills by department with the schedules you found, and ask what is wrong, so "looks right" is a full answer:
 
@@ -176,6 +176,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
     Say "ungrouped" in place of the departments when there are none. Then add only the lines that apply:
     - On an update: "New since last time: ..." (`added`) and "No longer listed: ..." (`removed`). Skip both on a first publish.
     - "Not shown, because they run inside another skill: ..." for the skills left out in step 2.
+    - "I grouped your skills into {N} departments: {their labels}. Run `/bp-dev:command-center` to change the grouping." when this run made the departments itself (a routine run with no last layout).
     - Anything left out for a limit in step 8.
     - When any business profile line is empty: "Not in your knowledge base yet, so left blank: ...", naming them in plain words (what you sell, who you serve, your niche, your website, your social handles, who you watch), then "Add them to your knowledge base and run this again. Ask the experts on your Command Center uses them to answer about your business."
 
