@@ -28,7 +28,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 
    If you have no `publish_command_center` tool, tell the user to restart Claude so the BuildPartner.ai plugin finishes updating, then run this again. Stop here.
 
-1b. **Say what this will do**, in two lines, before reading anything: "I will read this project's skills, your routines and your goals, show you the layout, and publish it to your Command Center. Nothing is sent until you confirm the layout." No question yet.
+1b. **Say what this will do**, in two lines, before reading anything: "I'll read this project's skills, your routines and your goals and update your Command Center." Never ask the user anything in this skill: a run by hand publishes the same way a routine run does.
 
 2. **Find this project's skills.** Each folder in `.claude/skills/` at the top of this project that holds a `SKILL.md` is one skill. Read its frontmatter (`name`, `description`, `argument-hint`) and enough of the body to know what it does and what it needs. Count only this project's skills: not skills from plugins, and not skills in the user's home folder.
 
@@ -50,7 +50,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
 4. **Work out the departments.** Use the first of these that applies:
    - `wiki/departments/` exists and has departments in it: each folder there (or each page, when a department is a single page) is one department. Its id is the folder or page name, and its label is that name in plain words ("marketing" becomes "Marketing"). Include every one, even a department with no skills yet.
    - The last layout has departments: keep those.
-   - Neither: ask the user one question with two options. **"Group my skills"**: you sort them into a few plain groups by what they do, such as Marketing, Sales, Operations and Leadership. **"Leave them ungrouped"**: no departments at all.
+   - Neither: group them yourself, without asking. Sort the skills into a few plain departments by what they do (such as Marketing, Sales, Operations and Leadership, or the names this business plainly uses). Use as few as fit, at most 8, each with a stable id. A skill that fits none stays `null`.
 
 5. **Describe each skill.** For every skill from step 2, work out:
    - **id**: what the user types after the slash to run it. That is the `name` in its frontmatter, or the folder name when it has none.
@@ -61,21 +61,13 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
    - **minutes_saved**: about how many minutes one run saves the user, compared with doing the same thing by hand. A whole number from 1 to 600. Work it out from what the skill does: a drafted reply is about 5, a one-page brief from a few sources about 20 to 30, a weekly report about 40. Keep the number from the last layout when the skill has not changed, so it does not move between runs. `null` when you cannot tell. The user can correct it on the page, and their number wins.
    - **input**: whenever one piece of text from the user changes what a run produces: a name, a company, a link, a topic, a date range, a question. That covers a skill that needs it and a skill that works without it but does a better job with it (it has an `argument-hint`, reads `$ARGUMENTS`, or opens by asking the user for one thing). Give the text box a short label that asks for exactly that, such as "Who is the call with?" or "What topic?". The page leaves the box empty and copies the plain command when nothing is typed, so an optional input never gets in the way. `null` only when the skill takes nothing from the user, takes only fixed words like SEND, or needs more than one piece of text. A skill that runs on a schedule keeps its fixed command and still gets the box when the rule above fits.
 
-6. **Read the routines, then ask one question to confirm.** Local Routines live in the Claude desktop app, and they can be read from this computer:
+6. **Read the routines.** Local Routines live in the Claude desktop app, and they can be read from this computer:
    - `~/.claude/scheduled-tasks/<id>/SKILL.md` holds each routine's prompt (its `name` and `description` frontmatter, then the command it runs).
    - The app's store, `~/Library/Application Support/Claude/claude-code-sessions/*/*/scheduled-tasks.json` on macOS (`%APPDATA%\Claude\claude-code-sessions\*\*\scheduled-tasks.json` on Windows), holds each routine's `id`, `displayName`, `cronExpression`, `enabled` and `cwd`. A routine with no `cronExpression` is "Manual only": it runs on demand.
 
    Read both. Keep the routines whose `cwd` is this project. Match each to a skill by the `/command` in its prompt: that skill's `schedule` comes from the cron (`0 8 * * *` is daily at 08:00; `0 9 * * 1` is weekly, Monday, 09:00; a day-of-month is monthly), and its `command` is the exact command line the prompt runs, with its arguments. A routine that matches no skill becomes its own entry (step 2). A disabled routine counts as on demand. If neither place can be read, fall back to what is written down: the schedules in the last layout, a schedules file in the project, a skill that says when it runs.
 
-   With the `routine` argument (a refresh started by `/bp-dev:run`, nobody watching) there is no question at any step: take what you found, keep every label, department, command and schedule from the last layout where the skill is still there, and go straight to step 8. Only when the project has no last layout and no `wiki/departments/`, group the skills yourself rather than asking: sort them into a few plain departments by what they do (such as Marketing, Sales, Operations and Leadership, or the names this business plainly uses), exactly as "Group my skills" does in step 4. Use as few departments as fit, at most 8, and give each a stable id. A skill that fits none stays `null`. This is the first build, and a page with every skill under "Other" tells the user nothing; they can regroup by running the command by hand.
-
-   Otherwise ask once, in plain text, only to confirm. Show the skills by department with the schedules you found, and ask what is wrong, so "looks right" is a full answer:
-
-   > "Here is what will show in your Command Center: [skills by department, with each routine's schedule]. I read the routines from your Claude desktop app. Anything wrong or missing? Say 'looks right' to go on."
-
-   Never ask the user to list what the store already says. On an update, show what changed since the last layout.
-
-   Take the answer as given and ask nothing more. If it corrects a schedule, a label, a department or a command, apply it. Never invent a schedule the store or the user did not give.
+   Then go straight to step 7, with no question, whether or not the `routine` argument is there. Keep every label, department, command and schedule from the last layout where the skill is still there. Never invent a schedule the store did not give. The user sees the result on their Command Center, and step 10 tells them what changed.
 
 7. **Read the company goals and the business profile.** If the knowledge base has company goals (a goals page in `wiki/`, or wherever this project keeps them), list each one with its target and deadline. For a goal's current number, use the newest number saved in the knowledge base for that goal, such as the history their goal update keeps. Only read: do not pull fresh numbers from connections and do not estimate. A goal with no saved number gets `value: null`. When no company goals are written down, `goals` is an empty list. Do not ask about goals.
 
@@ -225,7 +217,7 @@ You read this project, write ONE file, make ONE tool call (`publish_command_cent
     - With the `activity` argument, when the result's `activity` is true: "Your activity summary went with it: the last run of each skill, what you left unfinished and the time your skills saved are on the page." When it is false: "Your activity summary was not kept, because it is turned off in your Command Center settings."
     - On an update: "New since last time: ..." (`added`) and "No longer listed: ..." (`removed`). Skip both on a first publish.
     - "Not shown, because they run inside another skill: ..." for the skills left out in step 2.
-    - "I grouped your skills into {N} departments: {their labels}. Run `/bp-dev:command-center` to change the grouping." when this run made the departments itself (a routine run with no last layout).
+    - "I grouped your skills into {N} departments: {their labels}." when this run made the departments itself (no last layout and no `wiki/departments/`). Then: "To group them differently, tell me how and run this again."
     - Anything left out for a limit in step 8.
     - When any business profile line is empty: "Not in your knowledge base yet, so left blank: ...", naming them in plain words (what you sell, who you serve, your niche, your website, your social handles, who you watch), then "Add them to your knowledge base and run this again. Ask the experts on your Command Center uses them to answer about your business."
 
