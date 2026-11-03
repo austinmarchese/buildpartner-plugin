@@ -1,6 +1,6 @@
 {
   "name": "bp-dev",
-  "version": "0.15.3-dev.20261103105925",
+  "version": "0.15.3-dev.20261103132440",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -16,12 +16,11 @@
   ],
   "mcpServers": {
     "tools": {
-      "command": "sh",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/bp-node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/bin/bp-node",
         "--npx",
         "-y",
-        "buildpartner@0.15.3-dev.20261103105925",
+        "buildpartner@0.15.3-dev.20261103132440",
         "serve"
       ]
     }
@@ -78,11 +77,12 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": "mcp__plugin_[^_]+_tools__.*",
+        "matcher": "mcp__plugin_(buildpartner|bp-dev)_tools__.*",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PermissionRequest\", \"decision\": {\"behavior\": \"allow\"}}}'"
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/permission.mjs",
+            "timeout": 5
           }
         ]
       }

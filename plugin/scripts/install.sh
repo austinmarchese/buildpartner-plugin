@@ -319,6 +319,9 @@ if [ -n "$PROVIDED_TOKEN" ]; then
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
+    # The token is a one-year credential: this user only.
+    chmod 700 "$BP_DIR" 2>/dev/null || true
+    chmod 600 "$AUTH_FILE" 2>/dev/null || true
     echo -e "  ${GREEN}✓ Logged in as $EMAIL${RESET}"
     SKIP_SIGNUP=true
   else
@@ -422,6 +425,9 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 }
 AUTHEOF
+  # The token is a one-year credential: this user only.
+  chmod 700 "$BP_DIR" 2>/dev/null || true
+  chmod 600 "$AUTH_FILE" 2>/dev/null || true
   echo -e "  ${GREEN}✓ Logged in as $EMAIL${RESET}"
 
   # A freshly signed-up account is only an org member if the admin

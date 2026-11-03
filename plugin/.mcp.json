@@ -1,12 +1,11 @@
 {
   "mcpServers": {
     "tools": {
-      "command": "sh",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/bp-node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/bin/bp-node",
         "--npx",
         "-y",
-        "buildpartner@0.15.3-dev.20261103105925",
+        "buildpartner@0.15.3-dev.20261103132440",
         "serve"
       ]
     }
