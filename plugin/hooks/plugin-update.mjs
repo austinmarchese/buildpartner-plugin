@@ -26,8 +26,23 @@ try {
   // buildpartner-team@buildpartner and dev's bp-dev-team@bp-dev; check and
   // update each independently with the same grep-gate pattern so an enterprise
   // dev machine's team plugin also gets refreshed by this hook.
+  //
+  // `claude` is resolved here rather than trusted to be on PATH. A Claude Code
+  // started from the Claude Desktop app does not get the member's shell PATH,
+  // so a bare `claude` can be "command not found" even though it is running
+  // right now. Fall through the places the native installer and Homebrew put
+  // it. If none exists, do nothing: the hook must never fail a session.
+  const sh = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+  const home = process.env.HOME || "";
+  const candidates = [
+    `${home}/.local/bin/claude`,
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+  ].map(sh);
+  const resolve = `c=$(command -v claude 2>/dev/null); for p in ${candidates.join(" ")}; do [ -n "$c" ] || { [ -x "$p" ] && c="$p"; }; done; [ -n "$c" ] || exit 0;`;
   const cmd =
-    "claude plugin marketplace update 2>/dev/null && claude plugin update buildpartner@buildpartner 2>/dev/null; claude plugin list 2>/dev/null | grep -q 'buildpartner-team@buildpartner' && claude plugin update buildpartner-team@buildpartner 2>/dev/null; claude plugin list 2>/dev/null | grep -q 'bp-dev-team@bp-dev' && claude plugin update bp-dev-team@bp-dev 2>/dev/null";
+    resolve +
+    " \"$c\" plugin marketplace update 2>/dev/null && \"$c\" plugin update buildpartner@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'buildpartner-team@buildpartner' && \"$c\" plugin update buildpartner-team@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'bp-dev-team@bp-dev' && \"$c\" plugin update bp-dev-team@bp-dev 2>/dev/null";
   const child = spawn("sh", ["-c", cmd], {
     detached: true,
     stdio: "ignore",

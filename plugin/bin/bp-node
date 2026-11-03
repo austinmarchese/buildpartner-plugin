@@ -1,0 +1,85 @@
+#!/bin/sh
+# bp-node: run a Node script (or npx) with a Node.js this plugin can rely on.
+#
+# Every hook and the tools server go through this instead of calling `node` or
+# `npx` directly. A bare `node` only works when Node is on PATH at the moment
+# Claude Code starts, and that is not something we control: a Claude Code
+# started from the Claude Desktop app (opened from the Dock) does not read the
+# member's shell config the way a terminal does, nvm and friends rearrange PATH,
+# and fish users never see a line we add to .zshrc. When PATH is wrong the hooks
+# fail silently and the member quietly stops receiving plugin updates.
+#
+# So the decision of "which Node" lives here, in a fixed order:
+#   1. a Node on PATH that is new enough
+#   2. the Node the installer downloaded (~/.local/share/buildpartner/node)
+#   3. the usual places Node gets installed on a Mac or Linux box
+# and when none is found, one clear line goes to ~/.buildpartner/debug.log.
+#
+# Usage:
+#   sh bp-node <script.mjs> [args...]      run a script with node
+#   sh bp-node --npx <npx args...>         run npx from the same Node
+#
+# A hook with no usable Node exits 0 with no output, so a session never breaks
+# over telemetry. The tools server (--npx) exits 1 with a message, because a
+# silent "connected, no tools" would be worse than an honest error.
+
+MIN_MAJOR=18
+BP_NODE="$HOME/.local/share/buildpartner/node/bin/node"
+LOG="$HOME/.buildpartner/debug.log"
+
+new_enough() {
+  v="$("$1" -v 2>/dev/null)" || return 1
+  v="${v#v}"
+  [ "${v%%.*}" -ge "$MIN_MAJOR" ] 2>/dev/null
+}
+
+find_node() {
+  if p="$(command -v node 2>/dev/null)" && [ -n "$p" ] && new_enough "$p"; then
+    echo "$p"; return 0
+  fi
+  for p in "$BP_NODE" /opt/homebrew/bin/node /usr/local/bin/node "$HOME/.volta/bin/node" /usr/bin/node; do
+    [ -x "$p" ] && new_enough "$p" && { echo "$p"; return 0; }
+  done
+  # nvm and fnm keep one folder per version; newest name first is close enough.
+  for dir in "$HOME/.nvm/versions/node" "$HOME/.local/share/fnm/node-versions" "$HOME/Library/Application Support/fnm/node-versions"; do
+    [ -d "$dir" ] || continue
+    for p in $(ls -r "$dir" 2>/dev/null); do
+      for c in "$dir/$p/bin/node" "$dir/$p/installation/bin/node"; do
+        [ -x "$c" ] && new_enough "$c" && { echo "$c"; return 0; }
+      done
+    done
+  done
+  return 1
+}
+
+NODE="$(find_node)" || {
+  mkdir -p "$(dirname "$LOG")" 2>/dev/null
+  echo "[$(date -u +%H:%M:%S)] bp-node: no Node.js $MIN_MAJOR+ found (PATH=$PATH). Re-run: curl -fsSL https://buildpartner.ai/install.sh | bash" >> "$LOG" 2>/dev/null
+  if [ "$1" = "--npx" ]; then
+    echo "BuildPartner: Node.js $MIN_MAJOR+ was not found. Re-run the installer: curl -fsSL https://buildpartner.ai/install.sh | bash" >&2
+    exit 1
+  fi
+  exit 0
+}
+
+# npx (and anything a script spawns) finds node through PATH, so make the Node
+# we chose the first one on it. This is the whole point: PATH may not have had
+# any Node at all when Claude Code started.
+NODE_BIN="$(dirname "$NODE")"
+PATH="$NODE_BIN:$PATH"; export PATH
+
+if [ "$1" = "--npx" ]; then
+  shift
+  NPX="$NODE_BIN/npx"
+  if [ -x "$NPX" ]; then
+    exec "$NPX" "$@"
+  fi
+  # A bare node binary with no npm beside it (rare). npx is a Node script, so
+  # run it through the node we found.
+  CLI="$NODE_BIN/../lib/node_modules/npm/bin/npx-cli.js"
+  [ -f "$CLI" ] && exec "$NODE" "$CLI" "$@"
+  echo "BuildPartner: found Node at $NODE but no npx beside it. Re-run the installer: curl -fsSL https://buildpartner.ai/install.sh | bash" >&2
+  exit 1
+fi
+
+exec "$NODE" "$@"

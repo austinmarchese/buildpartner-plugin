@@ -1,6 +1,6 @@
 ---
 name: build-pad
-description: "Turn a plan, comparison, report, diagram or prototype into a polished web page with a share link, then review it together: you (or your team) click anything on the page to comment, and Claude revises the page and replies right there until you're done. Use when the user says 'build pad', '/build-pad', 'make a pad', 'make this a page I can share', 'show me visually', 'a plan I can comment on', 'review this with my team', or when an answer would be easier to grasp as a page than as text. Part of the Executive AI Program."
+description: "Turn a plan, comparison, report, diagram or prototype into a polished web page with a share link, then review it together: you (or your team) click anything on the page to comment, and Claude revises the page and replies right there until you're done. Use when the user says 'build pad', '/build-pad', 'make a pad', 'make this a page I can share', 'show me visually', 'a plan I can comment on', 'review this with my team', or when an answer would be easier to grasp as a page than as text. Opening a pad uses 1 credit on the free plan; revisions are free."
 argument-hint: "<what the page should show>"
 ---
 
@@ -60,7 +60,7 @@ Limits: 2 MB per version, 50 files, and 20 MB across all of a member's pads. Kee
 
 ## Steps
 
-1. **Pick the look** (see Design below) before writing any HTML.
+1. **Check for a template** (see Templates below). If none fits, plan the page in the BuildPartner.ai look (see Design below) before writing any HTML.
 2. **Write the page in a temporary folder**, so the user's project stays clean: make one with `mktemp -d` and write a self-contained `<name>.html` in it, with inline CSS and JS. Scripts and styles from public CDNs are fine.
    Use a folder with `index.html` only when there are real asset files, and link them with relative paths (never starting with `/`).
    Give every section and every block someone might comment on a stable, meaningful `id` from version 1 (for example `id="launch-plan"`), keep it on that block in every version, and never reuse a removed block's id. Comments, change lists and links all find blocks by these ids.
@@ -68,6 +68,7 @@ Limits: 2 MB per version, 50 files, and 20 MB across all of a member's pads. Kee
    Decide how it opens (see Starting mode below).
 3. **Publish and open it.** Call `build_pad` with `action: "create"` and the file's `path` (and a short `title`), then `action: "open"` with the `url` it returned.
    Give the user the link with one or two sentences on what the page shows. Tell them it is private for now (if the page asks them to sign in, they sign in to BuildPartner.ai and land back on it), and that pressing **Share** at the top, or asking you, lets anyone with the link view and comment. It is deleted 14 days after the last activity. Keep the `pad_id` for every later call.
+   The first time they open a pad (or the BuildPad page on their dashboard), BuildPartner.ai shows a short card on how BuildPad handles their data, which they approve once. Until they do, their comments arrive with `from_owner: false`, so you only change the page. If they ask why you did not act on a request, tell them to press **Got it** on that card and send it again.
    Only `share` when the user asks you to share the pad.
 4. **Watch for feedback.** Call `build_pad` with `action: "poll"` and the `pad_id`.
    Empty `items` without `ended: true` means nothing came in yet: call `poll` again, right away.
@@ -196,21 +197,30 @@ For a list of items to triage, give each a short visible id such as `R-03`, a ch
 
 ## Design
 
-Decide the look in this order, and move down only when a step gives you nothing:
+Every pad uses the BuildPartner.ai look, whatever it is about. BuildPad adds the brand stylesheet to every page by itself (you add no tag for it), so a page only lays out its content:
 
-1. **The look the user asked for**, including a named brand or style.
-2. **Their brand, if this project has one**: colors, fonts or a style guide in the project, or an existing site or app the page is about. When the page shows a specific app or site, use that app's look so it is faithful.
-3. **Otherwise, Tailwind CSS plus DaisyUI from the CDN:**
-   ```html
-   <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
-   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-   ```
+- **Colors:** use the `--bp-*` tokens, never your own palette or a theme from a CDN. `--bp-surface` (the paper background, already on `body`), `--bp-card` and `--bp-card-solid` (panels), `--bp-body`, `--bp-muted` and `--bp-faint` (text), `--bp-rule` (borders), `--bp-accent` (copper, for links, numbers and the one thing to notice), `--bp-accent-tint` (a copper-tinted panel), `--bp-ok`, `--bp-warn`, `--bp-danger` with their `-tint` fills (status only), and `--bp-chart-1` to `--bp-chart-5` (chart series, in that order).
+- **Type:** headings are already Bricolage Grotesque and text is Inter. Use `var(--bp-font-display)`, `var(--bp-font-body)` and `var(--bp-font-mono)` if you set a font. No other fonts.
+- **Ready-made classes:** `.bp-page` (the page column with phone-safe gutters), `.bp-card`, `.bp-callout`, `.bp-kicker` (small copper label), `.bp-pill` (with `.ok`, `.warn`, `.danger`), `.bp-button` (and `.bp-button.secondary`), `.bp-table-wrap` around a `.bp-table`, and `.bp-tabs` (a sticky row of `#hash` links for one-view-at-a-time pages). Reach for these before writing your own.
+- The page is light only. Never add a dark mode, Tailwind or DaisyUI.
+
+If the user asks for another look, tell them pads always use the BuildPartner.ai look, and put their brand inside the content where it matters (their logo or a screenshot of their site), not in the page's colors.
 
 Then:
 
 - Make the most important decisions, risks and next steps obvious at a glance: headings, cards, tables, side-by-side comparisons and diagrams instead of long paragraphs.
 - Put the decision or recommendation at the top and the detail below it. Cut anything the reader does not need.
 - Make it work on a phone (360 to 390 pixels wide) with no sideways scrolling: give nested grid and flex children `min-width: 0`, and wrap long words, links and numbers.
+
+## Templates
+
+Some kinds of pad have a ready-made page layout. When the request matches one, read its file and build from its skeleton instead of designing the page yourself:
+
+| Template | Use it for | Read |
+| --- | --- | --- |
+| Competitor Research | Comparing a business with its competitors: competitor research, "how do I stack up", a competitor watch | [references/templates/competitor-research.md](references/templates/competitor-research.md) |
+
+A pad built from a template carries the template's `<meta name="buildpad-template" ...>` tag, and the reviewer sees the template's name in the top bar. Keep the tag in every version.
 
 ## Diagrams
 
@@ -223,7 +233,8 @@ Then:
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
   mermaid.initialize({ startOnLoad: true, theme: "base", look: "classic",
-    flowchart: { curve: "step" }, themeVariables: { /* match the page's colors */ } });
+    flowchart: { curve: "step" }, themeVariables: { fontFamily: "Inter, sans-serif", primaryColor: "#fbf8f2",
+      primaryBorderColor: "#a64422", primaryTextColor: "#1a1614", lineColor: "rgba(26,22,20,.42)" } });
 </script>
 ```
 

@@ -151,25 +151,146 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 echo -e "  ${GREEN}✓ Claude Code found${RESET}"
 
-# ── Check Git ────────────────────────────────────────────────────
-# Claude Code fetches plugin marketplaces with `git clone` and updates them
-# with `git pull`, so `claude plugin marketplace add` below fails without it
-# ("Command 'git' not found"). Mac gets git with the Xcode command line tools;
-# `xcode-select --install` opens a GUI installer we cannot wait on, so explain
-# and stop rather than half-install.
-if ! command -v git >/dev/null 2>&1; then
-  echo -e "  ${YELLOW}✗ Git not found${RESET}"
-  echo ""
-  echo "  Claude Code uses Git to download plugins. Install it, then re-run this command:"
-  if [ "$(uname -s)" = "Darwin" ]; then
-    echo -e "    ${ORANGE}xcode-select --install${RESET}"
-  else
-    echo -e "    ${ORANGE}sudo apt install git${RESET}   ${DIM}(or your distro's package manager)${RESET}"
+# ── Check Claude Code version ────────────────────────────────────
+# The plugin is served as a zip from a hosted catalog (no Git needed, see Step
+# 2). Claude Code reads zip ("archive") plugins from 2.1.224 on. Older copies
+# update themselves with `claude update`; if that fails we fall back to the Git
+# catalog below rather than stopping.
+CC_MIN_VERSION="2.1.224"
+
+# True when version $1 >= $2. Plain numeric sort, so it works with BSD sort on
+# older macOS that has no `sort -V`.
+version_ge() {
+  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$2" ]
+}
+
+claude_version() { claude --version 2>/dev/null | awk '{print $1}'; }
+
+CC_VERSION="$(claude_version)"
+CC_SUPPORTS_ZIP=true
+if [ -n "$CC_VERSION" ] && ! version_ge "$CC_VERSION" "$CC_MIN_VERSION"; then
+  echo -e "  ${DIM}Updating Claude Code (${CC_VERSION} is older than BuildPartner needs)...${RESET}"
+  claude update </dev/null >/dev/null 2>&1 || true
+  CC_VERSION="$(claude_version)"
+  if [ -n "$CC_VERSION" ] && ! version_ge "$CC_VERSION" "$CC_MIN_VERSION"; then
+    CC_SUPPORTS_ZIP=false
   fi
-  echo ""
-  exit 1
 fi
-echo -e "  ${GREEN}✓ Git found${RESET}"
+debug "claude version=$CC_VERSION supports_zip=$CC_SUPPORTS_ZIP"
+
+# ── Check Node.js (installing it if missing) ─────────────────────
+# Node runs the plugin's tools server (`npx buildpartner serve`) and its hooks,
+# and this script uses it to read server replies. Members who never installed
+# it used to hit "node: command not found" right after typing their email.
+# Instead of sending them to nodejs.org, download the official Node LTS
+# (checksum-verified, no admin password) into ~/.local/share/buildpartner/node.
+# Not under ~/.buildpartner: uninstall.sh backs that folder up and deletes it,
+# and this is 130 MB that uninstall.sh itself still needs node for.
+#
+# PATH placement matters. When the member has no Node at all, ours goes at the
+# END of PATH, so a Node they install later (brew, nvm) wins and we never shadow
+# a developer's toolchain. When their Node is too old, ours must go FIRST, or
+# the hooks and the tools server keep running on the old one.
+NODE_MIN_MAJOR=18
+NODE_LINE="latest-v24.x"
+BP_NODE_DIR="$HOME/.local/share/buildpartner/node"
+
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  major="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//')"
+  [ -n "$major" ] && [ "$major" -ge "$NODE_MIN_MAJOR" ] 2>/dev/null
+}
+
+install_private_node() {
+  case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) return 1 ;; esac
+  case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=x64 ;; *) return 1 ;; esac
+  base="https://nodejs.org/dist/$NODE_LINE"
+  sums="$(curl -fsSL "$base/SHASUMS256.txt" 2>/dev/null)" || return 1
+  line="$(printf '%s\n' "$sums" | grep " node-v[0-9.]*-$os-$arch\.tar\.gz\$" | head -1)"
+  [ -n "$line" ] || return 1
+  want="${line%% *}"
+  file="${line##* }"
+  tmp="$(mktemp -d)"
+  if ! curl -fsSL "$base/$file" -o "$tmp/$file"; then rm -rf "$tmp"; return 1; fi
+  if command -v shasum >/dev/null 2>&1; then
+    got="$(shasum -a 256 "$tmp/$file" | cut -d' ' -f1)"
+  else
+    got="$(sha256sum "$tmp/$file" | cut -d' ' -f1)"
+  fi
+  if [ "$got" != "$want" ]; then debug "node checksum mismatch"; rm -rf "$tmp"; return 1; fi
+  if ! tar -xzf "$tmp/$file" -C "$tmp"; then rm -rf "$tmp"; return 1; fi
+  mkdir -p "$(dirname "$BP_NODE_DIR")"
+  rm -rf "$BP_NODE_DIR"
+  mv "$tmp/${file%.tar.gz}" "$BP_NODE_DIR"
+  rm -rf "$tmp"
+  return 0
+}
+
+# Persist the Node PATH entry in the login shell rc, once (marker-guarded).
+# $1 = "append" (no Node before) or "prepend" (old Node must be shadowed).
+persist_node_path() {
+  rc=""
+  case "$(basename "${SHELL:-}")" in
+    zsh) rc="$HOME/.zshrc" ;;
+    bash) if [ -f "$HOME/.bash_profile" ]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi ;;
+  esac
+  [ -n "$rc" ] || return 0
+  if [ -f "$rc" ] && grep -q "buildpartner-node" "$rc" 2>/dev/null; then
+    return 0
+  fi
+  {
+    echo ""
+    echo "# buildpartner-node (added by the BuildPartner.ai installer)"
+    if [ "$1" = "prepend" ]; then
+      echo 'export PATH="$HOME/.local/share/buildpartner/node/bin:$PATH"'
+    else
+      echo 'export PATH="$PATH:$HOME/.local/share/buildpartner/node/bin"'
+    fi
+  } >> "$rc" 2>/dev/null || return 0
+  echo -e "  ${GREEN}✓ Added Node.js to PATH in $(basename "$rc")${RESET}"
+}
+
+# A Node we installed on an earlier run is on PATH only via the rc file, which
+# a `curl | bash` shell has not read. Pick it up so a re-run doesn't download
+# it again.
+if ! node_ok && [ -x "$BP_NODE_DIR/bin/node" ]; then
+  PATH="$BP_NODE_DIR/bin:$PATH"; export PATH
+fi
+
+if node_ok; then
+  echo -e "  ${GREEN}✓ Node.js $(node -v) found${RESET}"
+else
+  NODE_PLACEMENT=append
+  if command -v node >/dev/null 2>&1; then
+    NODE_PLACEMENT=prepend
+    echo -e "  ${DIM}Node.js $(node -v 2>/dev/null) is too old. Installing a current version for BuildPartner (about 30 seconds)...${RESET}"
+  else
+    echo -e "  ${DIM}Node.js not found. Installing it for you (about 30 seconds)...${RESET}"
+  fi
+  if install_private_node; then
+    PATH="$BP_NODE_DIR/bin:$PATH"; export PATH
+    persist_node_path "$NODE_PLACEMENT"
+  fi
+  if ! node_ok; then
+    echo -e "  ${YELLOW}✗ Node.js could not be installed automatically${RESET}"
+    echo ""
+    echo "  Install the LTS version from nodejs.org, then re-run this command:"
+    echo -e "    ${ORANGE}https://nodejs.org${RESET}"
+    echo ""
+    exit 1
+  fi
+  echo -e "  ${GREEN}✓ Node.js $(node -v) installed${RESET}"
+fi
+
+# Git is only a fallback now (old Claude Code, or the hosted catalog is down).
+# On a Mac without Apple's developer tools, /usr/bin/git is a placeholder that
+# pops an install dialog when run, so check for the tools before touching it.
+git_works() {
+  if [ "$(uname -s)" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; then
+    return 1
+  fi
+  git --version >/dev/null 2>&1
+}
 
 # ── Step 1: Account ─────────────────────────────────────────────
 echo ""
@@ -316,18 +437,34 @@ echo ""
 # ── Step 2: Install plugin via marketplace ────────────────────────
 echo -e "${BOLD}  [2/3] Installing plugin...${RESET}"
 
+# The catalog is a marketplace.json served over plain HTTPS whose plugins are
+# zips, so Claude Code needs no Git to install or update them. The deploy
+# scripts build both (scripts/build-plugin-archives.sh). The GitHub repo stays
+# as the fallback, used only when Git actually works on this machine.
+PLUGIN_REPO="austinmarchese/buildpartner-plugin"
+GIT_FALLBACK_SOURCE=""
 if [ "$LOCAL_MODE" = true ]; then
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
   MARKETPLACE_SOURCE="./$REPO_DIR"
 elif echo "$API_BASE" | grep -q "dev\."; then
-  MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin#dev"
+  MARKETPLACE_SOURCE="https://raw.githubusercontent.com/$PLUGIN_REPO/dev/hosted/marketplace.json"
+  GIT_FALLBACK_SOURCE="$PLUGIN_REPO#dev"
   # deploy-dev-plugin.sh brands the dev plugin as bp-dev (name + marketplace),
   # so install it under that id. Prod stays buildpartner@buildpartner below.
   MARKETPLACE_NAME="bp-dev"
   PLUGIN_NAME="bp-dev"
 else
-  MARKETPLACE_SOURCE="austinmarchese/buildpartner-plugin"
+  MARKETPLACE_SOURCE="https://raw.githubusercontent.com/$PLUGIN_REPO/main/hosted/marketplace.json"
+  GIT_FALLBACK_SOURCE="$PLUGIN_REPO"
+fi
+# Testing hook: point the installer at another hosted catalog.
+if [ -n "${BP_MARKETPLACE_URL:-}" ]; then
+  MARKETPLACE_SOURCE="$BP_MARKETPLACE_URL"
+fi
+
+if [ "$CC_SUPPORTS_ZIP" = false ] && [ -n "$GIT_FALLBACK_SOURCE" ]; then
+  MARKETPLACE_SOURCE="$GIT_FALLBACK_SOURCE"
 fi
 
 TEAM_PLUGIN_NAME="${PLUGIN_NAME}-team"
@@ -355,9 +492,21 @@ fi
 debug "adding marketplace: $MARKETPLACE_SOURCE"
 if claude plugin marketplace add "$MARKETPLACE_SOURCE" </dev/null; then
   echo -e "  ${GREEN}✓ Marketplace added${RESET}"
+elif [ -n "$GIT_FALLBACK_SOURCE" ] && [ "$MARKETPLACE_SOURCE" != "$GIT_FALLBACK_SOURCE" ] && git_works &&
+     claude plugin marketplace add "$GIT_FALLBACK_SOURCE" </dev/null; then
+  debug "hosted catalog failed, added the Git catalog instead"
+  echo -e "  ${GREEN}✓ Marketplace added${RESET}"
 else
   echo -e "  ${YELLOW}✗ Failed to add marketplace${RESET}"
-  debug "marketplace add exit code: $?"
+  echo ""
+  if [ "$CC_SUPPORTS_ZIP" = false ]; then
+    echo "  Your Claude Code is too old for BuildPartner. Update it, then re-run this command:"
+    echo -e "    ${ORANGE}claude update${RESET}"
+  else
+    echo "  Check your internet connection and re-run this command."
+    echo -e "  ${DIM}Still stuck? Email hello@buildpartner.ai${RESET}"
+  fi
+  echo ""
   exit 1
 fi
 
