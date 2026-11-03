@@ -66,6 +66,61 @@ if echo "$API_BASE" | grep -q "www\.buildpartner\.ai"; then
 else
   AUTH_API_LINE="\"api_base\": \"$API_BASE\","
 fi
+# ── Install report (Admin > Installs) ────────────────────────────
+# Each step posts one small event so the team can see where installs fail.
+# Fire and forget: every call runs in the background with a 3 second cap and
+# all output and errors discarded, so it can never slow down or break the
+# install. The body holds the step, OS, versions and our own error line, never
+# the email or token. The token goes only in the Authorization header (as the
+# ingest call below does), so a signed-in step links to the account.
+# The id is saved to ~/.buildpartner/install-id so the tools server's first
+# start can report under the same install.
+INSTALL_ID="$( (cat /proc/sys/kernel/random/uuid || uuidgen) 2>/dev/null | head -1 | tr 'A-Z' 'a-z')"
+[ -n "$INSTALL_ID" ] || INSTALL_ID="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+INSTALL_OS="$(uname -s 2>/dev/null | tr 'A-Z' 'a-z')"
+INSTALL_ARCH="$(uname -m 2>/dev/null)"
+INSTALL_STEP="claude_code"   # what we are doing now, reported if the install stops
+INSTALL_ERROR=""             # our last error line, set right before each exit 1
+INSTALL_LAST_CMD=""          # the last command that failed, for an unplanned stop
+INSTALL_DONE=false
+NODE_VERSION=""
+PLUGIN_VERSION=""
+# A new install reports "tools connected" again even on the same version.
+mkdir -p "$BP_DIR" 2>/dev/null && printf '%s\n' "$INSTALL_ID" > "$BP_DIR/install-id" 2>/dev/null || true
+rm -f "$BP_DIR/tools-connected.json" 2>/dev/null || true
+
+json_str() { printf '%s' "$1" | tr -d '\000-\037' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+report_step() {
+  [ -n "$INSTALL_ID" ] || return 0
+  body="{\"install_id\":\"$INSTALL_ID\",\"step\":\"$1\",\"source\":\"sh\",\"os\":\"$(json_str "$INSTALL_OS")\",\"arch\":\"$(json_str "$INSTALL_ARCH")\",\"version\":\"$(json_str "$PLUGIN_VERSION")\",\"cc_version\":\"$(json_str "${CC_VERSION:-}")\",\"node_version\":\"$(json_str "$NODE_VERSION")\",\"failed_step\":\"$(json_str "${2:-}")\",\"error\":\"$(json_str "${3:-}")\"}"
+  if [ -n "${TOKEN:-}" ]; then
+    ( curl -s -m 3 -X POST "$API_BASE/api/buildpartner/install-event" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "$body" </dev/null >/dev/null 2>&1 & ) 2>/dev/null || true
+  else
+    ( curl -s -m 3 -X POST "$API_BASE/api/buildpartner/install-event" -H "Content-Type: application/json" -d "$body" </dev/null >/dev/null 2>&1 & ) 2>/dev/null || true
+  fi
+}
+
+on_install_exit() {
+  code=$1
+  if [ "$INSTALL_DONE" != true ] && [ "$code" != 0 ]; then
+    report_step failed "$INSTALL_STEP" "${INSTALL_ERROR:-exit $code: $INSTALL_LAST_CMD}"
+  fi
+}
+trap 'INSTALL_LAST_CMD="$BASH_COMMAND"' ERR
+trap 'on_install_exit $?' EXIT
+
+# Runs a claude command, shows its output, and keeps its last line for the
+# install report when it fails.
+run_reported() {
+  out="$("$@" </dev/null 2>&1)" && rc=0 || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  [ "$rc" = 0 ] || INSTALL_ERROR="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -1)"
+  return "$rc"
+}
+
+report_step started
+
 debug "API_BASE=$API_BASE"
 debug "API_DOMAIN=$API_DOMAIN"
 debug "LOCAL_MODE=$LOCAL_MODE"
@@ -147,6 +202,7 @@ if ! command -v claude >/dev/null 2>&1; then
   echo -e "    ${ORANGE}curl -fsSL https://claude.ai/install.sh | bash${RESET}"
   echo ""
   echo -e "  ${DIM}Docs: https://claude.ai/code${RESET}"
+  INSTALL_ERROR="Claude Code could not be installed automatically"
   exit 1
 fi
 echo -e "  ${GREEN}✓ Claude Code found${RESET}"
@@ -177,6 +233,7 @@ if [ -n "$CC_VERSION" ] && ! version_ge "$CC_VERSION" "$CC_MIN_VERSION"; then
   fi
 fi
 debug "claude version=$CC_VERSION supports_zip=$CC_SUPPORTS_ZIP"
+INSTALL_STEP="node"
 
 # ── Check Node.js (installing it if missing) ─────────────────────
 # Node runs the plugin's tools server (`npx buildpartner serve`) and its hooks,
@@ -277,10 +334,14 @@ else
     echo "  Install the LTS version from nodejs.org, then re-run this command:"
     echo -e "    ${ORANGE}https://nodejs.org${RESET}"
     echo ""
+    INSTALL_ERROR="Node.js could not be installed automatically"
     exit 1
   fi
   echo -e "  ${GREEN}✓ Node.js $(node -v) installed${RESET}"
 fi
+NODE_VERSION="$(node -v 2>/dev/null)"
+report_step node_ready
+INSTALL_STEP="sign_in"
 
 # Git is only a fallback now (old Claude Code, or the hosted catalog is down).
 # On a Mac without Apple's developer tools, /usr/bin/git is a placeholder that
@@ -359,6 +420,7 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
     done
   else
     echo -e "  ${YELLOW}! No terminal to prompt on. Run this in a terminal, or pass --token.${RESET}"
+    INSTALL_ERROR="No terminal to prompt on"
     exit 1
   fi
 
@@ -380,8 +442,10 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
   if [ -z "$LOGIN_ID" ]; then
     if [ "$START_ERROR" = "network" ] || [ -z "$START_ERROR" ]; then
       echo -e "  ${YELLOW}! Could not reach ${API_DOMAIN}. Check your connection and try again.${RESET}"
+      INSTALL_ERROR="Could not reach $API_DOMAIN to start sign-in"
     else
       echo -e "  ${YELLOW}! $START_ERROR${RESET}"
+      INSTALL_ERROR="Sign-in start: $START_ERROR"
     fi
     exit 1
   fi
@@ -411,6 +475,7 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
 
   if [ -z "$TOKEN" ]; then
     echo -e "  ${YELLOW}! The login link expired. Re-run this command for a new one.${RESET}"
+    INSTALL_ERROR="Login link expired before it was clicked"
     exit 1
   fi
 
@@ -439,6 +504,8 @@ AUTHEOF
 fi
 
 echo ""
+report_step signed_in
+INSTALL_STEP="marketplace"
 
 # ── Step 2: Install plugin via marketplace ────────────────────────
 echo -e "${BOLD}  [2/3] Installing plugin...${RESET}"
@@ -496,10 +563,10 @@ elif claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; t
 fi
 
 debug "adding marketplace: $MARKETPLACE_SOURCE"
-if claude plugin marketplace add "$MARKETPLACE_SOURCE" </dev/null; then
+if run_reported claude plugin marketplace add "$MARKETPLACE_SOURCE"; then
   echo -e "  ${GREEN}✓ Marketplace added${RESET}"
 elif [ -n "$GIT_FALLBACK_SOURCE" ] && [ "$MARKETPLACE_SOURCE" != "$GIT_FALLBACK_SOURCE" ] && git_works &&
-     claude plugin marketplace add "$GIT_FALLBACK_SOURCE" </dev/null; then
+     run_reported claude plugin marketplace add "$GIT_FALLBACK_SOURCE"; then
   debug "hosted catalog failed, added the Git catalog instead"
   echo -e "  ${GREEN}✓ Marketplace added${RESET}"
 else
@@ -513,6 +580,7 @@ else
     echo -e "  ${DIM}Still stuck? Email hello@buildpartner.ai${RESET}"
   fi
   echo ""
+  INSTALL_ERROR="Failed to add marketplace: ${INSTALL_ERROR:-no output}"
   exit 1
 fi
 
@@ -525,12 +593,17 @@ if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; th
 fi
 
 debug "installing plugin: $PLUGIN_NAME@$MARKETPLACE_NAME"
-if claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME" </dev/null; then
+INSTALL_STEP="plugin"
+if run_reported claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
   echo -e "  ${GREEN}✓ Plugin installed${RESET}"
 else
   echo -e "  ${YELLOW}✗ Failed to install plugin${RESET}"
+  INSTALL_ERROR="Failed to install plugin: ${INSTALL_ERROR:-no output}"
   exit 1
 fi
+PLUGIN_VERSION="$(claude plugin list </dev/null 2>/dev/null | grep -A1 " $PLUGIN_NAME@$MARKETPLACE_NAME\$" | sed -n 's/.*Version: *//p' | head -1)" || true
+report_step plugin_installed
+INSTALL_STEP="finish"
 
 TEAM_INSTALLED=false
 if [ -n "$ORG_SLUG" ] || [ "$FORCE_TEAM" = true ]; then
@@ -635,5 +708,8 @@ echo -e "  ${ORANGE}/bp-dev:build${RESET}"
 echo ""
 echo -e "  ${DIM}If you're already in Claude Code, restart the session first.${RESET}"
 echo ""
+
+INSTALL_DONE=true
+report_step finished
 
 } # end pipe-drain wrapper (see matching { near top)
