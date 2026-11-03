@@ -546,6 +546,25 @@ if [ -n "$ORG_SLUG" ] || [ "$FORCE_TEAM" = true ]; then
   fi
 fi
 
+# A dev install turns the prod plugins off, so a tester runs only bp-dev. With
+# both on, a dev tools server that fails to start is invisible: Claude quietly
+# calls the prod plugin's tool of the same name instead. A prod install turns
+# them back on. Best-effort, never fails the install.
+if [ "$MARKETPLACE_NAME" = "bp-dev" ]; then
+  for p in buildpartner@buildpartner buildpartner-team@buildpartner; do
+    if claude plugin list 2>/dev/null | grep -q "$p"; then
+      claude plugin disable "$p" </dev/null >/dev/null 2>&1 &&
+        echo -e "  ${GREEN}✓ Turned off $p for dev testing (a prod install turns it back on)${RESET}"
+    fi
+  done
+else
+  for p in "$PLUGIN_NAME@$MARKETPLACE_NAME" "$TEAM_PLUGIN_NAME@$MARKETPLACE_NAME"; do
+    if claude plugin list 2>/dev/null | grep -q "$p"; then
+      claude plugin enable "$p" </dev/null >/dev/null 2>&1 || true
+    fi
+  done
+fi
+
 if [ "$TEAM_INSTALLED" = true ]; then
   echo -e "  ${GREEN}✓ 5 skills available${RESET}"
 else
