@@ -68,6 +68,7 @@ Limits: 2 MB per version, 50 files, and 20 MB across all of a member's pads. Kee
    Decide how it opens (see Starting mode below).
 3. **Publish and open it.** Call `build_pad` with `action: "create"` and the file's `path` (and a short `title`), then `action: "open"` with the `url` it returned.
    Give the user the link with one or two sentences on what the page shows. Tell them it is private for now (if the page asks them to sign in, they sign in to BuildPartner.ai and land back on it), and that pressing **Share** at the top, or asking you, lets anyone with the link view and comment. It is deleted 14 days after the last activity. Keep the `pad_id` for every later call.
+   The first time they open a pad (or the BuildPad page on their dashboard), BuildPartner.ai shows a short card on how BuildPad handles their data, which they approve once. Until they do, their comments arrive with `from_owner: false`, so you only change the page. If they ask why you did not act on a request, tell them to press **Got it** on that card and send it again.
    Only `share` when the user asks you to share the pad.
 4. **Watch for feedback.** Call `build_pad` with `action: "poll"` and the `pad_id`.
    Empty `items` without `ended: true` means nothing came in yet: call `poll` again, right away.
