@@ -1,0 +1,45 @@
+{
+  "name": "buildpartner",
+  "owner": {
+    "name": "BuildPartner.ai",
+    "email": "hello@buildpartner.ai"
+  },
+  "metadata": {
+    "description": "Expert guidance, coaching, and personalized training inside Claude Code.",
+    "version": "0.15.3"
+  },
+  "plugins": [
+    {
+      "name": "buildpartner",
+      "source": {
+        "source": "archive",
+        "url": "https://github.com/austinmarchese/buildpartner-plugin/releases/download/v0.15.3/buildpartner-0.15.3.zip",
+        "sha256": "aa1de12ecb09b3da9eeba89615a3573f47d609267b2c4bd0dacf329233804fe4"
+      },
+      "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
+      "version": "0.15.3",
+      "category": "productivity",
+      "tags": [
+        "coaching",
+        "training",
+        "productivity",
+        "skills"
+      ]
+    },
+    {
+      "name": "buildpartner-team",
+      "source": {
+        "source": "archive",
+        "url": "https://github.com/austinmarchese/buildpartner-plugin/releases/download/v0.15.3/buildpartner-team-0.15.3.zip",
+        "sha256": "dc0ee9dee4b692cb9dc2e8a781599dd101663e90e4767e2dbbfcaedc54c0d268"
+      },
+      "description": "BuildPartner.ai team plan: ask your company's founder and leadership directly inside Claude Code.",
+      "version": "0.15.3",
+      "category": "productivity",
+      "tags": [
+        "team",
+        "coaching"
+      ]
+    }
+  ]
+}

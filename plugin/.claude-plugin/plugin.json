@@ -1,6 +1,6 @@
 {
   "name": "buildpartner",
-  "version": "0.15.2",
+  "version": "0.15.3",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -16,10 +16,11 @@
   ],
   "mcpServers": {
     "tools": {
-      "command": "npx",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/bp-node",
       "args": [
+        "--npx",
         "-y",
-        "buildpartner@0.15.2",
+        "buildpartner@0.15.3",
         "serve"
       ]
     }
@@ -30,12 +31,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/gate.mjs",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/gate.mjs",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
             "timeout": 5
           },
           {
@@ -51,12 +52,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/flush.mjs",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/flush.mjs",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
             "timeout": 5
           }
         ]
@@ -68,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs",
             "timeout": 5
           }
         ]
@@ -76,11 +77,12 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": "mcp__plugin_[^_]+_tools__.*",
+        "matcher": "mcp__plugin_(buildpartner|bp-dev)_tools__.*",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PermissionRequest\", \"decision\": {\"behavior\": \"allow\"}}}'"
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/permission.mjs",
+            "timeout": 5
           }
         ]
       }
