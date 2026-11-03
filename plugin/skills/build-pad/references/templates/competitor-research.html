@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="buildpad-template" content="competitor-research">
+<meta name="buildpad-annotation" content="off">
+<title>Competitor research: {{BUSINESS}}</title>
+<!-- Template: Competitor Research. Colors, fonts, cards, pills, tables, buttons and tabs come
+     from the BuildPad brand stylesheet every pad gets (--bp-* tokens, .bp-* classes). This file
+     only adds the layout below. Keep every id; fill every {{...}}; repeat the blocks marked REPEAT. -->
+<style>
+  .head { background: var(--bp-card-solid); padding: 18px max(16px, env(safe-area-inset-right, 0px)) 6px max(16px, env(safe-area-inset-left, 0px)); }
+  .head-in { max-width: 920px; margin: 0 auto; display: grid; gap: 4px; }
+  .head-in p { margin: 0; font-size: 13px; color: var(--bp-muted); }
+  .head-in b { color: var(--bp-body); }
+  .bp-tabs { padding-inline: max(16px, calc((100% - 920px) / 2)); }
+  h1 { font-size: clamp(25px, 4vw, 36px); margin: 0; }
+  h2 { font-size: 20px; margin: 0; }
+  p { margin: 0; }
+  .sec { display: grid; gap: 12px; min-width: 0; }
+  .changes { list-style: none; margin: 0; padding: 0; }
+  .changes li { display: grid; grid-template-columns: 28px 1fr auto; gap: 2px 12px; padding: 14px 18px; border-bottom: 1px solid var(--bp-rule); align-items: start; }
+  .changes li:last-child { border-bottom: 0; }
+  .changes .n { font: 800 19px/1.3 var(--bp-font-display); color: var(--bp-accent); }
+  .changes .t { font-weight: 600; min-width: 0; }
+  .changes .w { grid-column: 2; color: var(--bp-muted); font-size: 14px; min-width: 0; }
+  .changes .w a { font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .pick { grid-column: 3; grid-row: 1 / span 2; display: flex; gap: 4px; }
+  .pick label { font-size: 12.5px; font-weight: 600; background: var(--bp-elevated); border: 1px solid var(--bp-rule); border-radius: 10px; padding: 4px 10px; cursor: pointer; }
+  .pick input { position: absolute; opacity: 0; pointer-events: none; }
+  .pick label:has(input:checked) { background: var(--bp-accent); border-color: var(--bp-accent); color: var(--bp-on-accent); }
+  .pick label:focus-within { outline: 2px solid var(--bp-accent); outline-offset: 1px; }
+  .queue { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 13px; }
+  .bp-table { min-width: 560px; }
+  tr.you > * { background: var(--bp-accent-tint); }
+  tbody th a { font-weight: 700; text-decoration: none; }
+  .no { color: var(--bp-danger); font-weight: 600; }
+  .shot { position: relative; padding: 0; border: 1px solid var(--bp-rule); border-radius: var(--bp-radius); overflow: hidden; background: var(--bp-card-solid); cursor: zoom-in; width: 100%; display: block; }
+  .shot img { display: block; width: 100%; height: auto; }
+  .shot:focus-visible { outline: 2px solid var(--bp-accent); outline-offset: 2px; }
+  .pin, .dot { border-radius: 50%; background: var(--bp-accent); color: var(--bp-on-accent); font-weight: 700; text-align: center; }
+  .pin { position: absolute; transform: translate(-50%, -50%); width: 26px; height: 26px; font-size: 13px; line-height: 26px; box-shadow: 0 0 0 3px var(--bp-card-solid), 0 4px 12px rgba(26, 22, 20, 0.25); }
+  @media (max-width: 600px) { .pin { width: 18px; height: 18px; font-size: 10px; line-height: 18px; box-shadow: 0 0 0 2px var(--bp-card-solid); } }
+  .cap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--bp-faint); }
+  .finds { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .finds li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; }
+  .dot { width: 22px; height: 22px; font-size: 12px; line-height: 22px; }
+  .finds b { display: block; }
+  .steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+  .steps li::marker { color: var(--bp-accent); font-weight: 700; }
+  .steps code { font-size: 12px; color: var(--bp-faint); }
+  .src { font: 500 12px/1.7 var(--bp-font-mono); color: var(--bp-faint); overflow-wrap: anywhere; }
+  .foot { border-top: 1px solid var(--bp-rule); max-width: 920px; margin: 0 auto; padding: 16px max(16px, env(safe-area-inset-right, 0px)) 28px max(16px, env(safe-area-inset-left, 0px)); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; font-size: 12.5px; color: var(--bp-faint); }
+  dialog { border: 0; padding: 0; max-width: min(1280px, 96vw); background: transparent; }
+  dialog::backdrop { background: rgba(26, 22, 20, 0.8); }
+  dialog img { display: block; width: 100%; height: auto; border-radius: 12px; }
+  dialog .bp-button { position: absolute; top: 10px; right: 10px; }
+</style>
+</head>
+<body>
+
+<header class="head"><div class="head-in">
+  <p class="bp-kicker">Competitor research</p>
+  <p>For <b>{{BUSINESS}}</b> · {{DATE}} · {{N_PAGES}} pages read</p>
+</div></header>
+<nav class="bp-tabs" aria-label="Sections">
+  <a href="#summary">Summary</a>
+  <!-- REPEAT per competitor, same order as the views below -->
+  <a href="#{{SLUG}}">{{COMPETITOR}}</a>
+  <!-- /REPEAT -->
+  <a href="#you">Your site</a><!-- only when the member's own site was read -->
+</nav>
+
+<main class="bp-page">
+
+<section id="v-summary" data-view="summary" class="sec" style="gap:28px">
+  <div class="sec">
+    <h1 id="takeaway">{{ONE OR TWO LINE TAKEAWAY FOR THEIR BUSINESS}}</h1>
+    <!-- repeat runs only: -->
+    <p class="bp-callout" id="changed-since"><b>Since {{LAST_RUN_DATE}}:</b> {{WHAT CHANGED, ONE LINE PER COMPETITOR THAT CHANGED}}</p>
+  </div>
+
+  <div class="sec" id="changes">
+    <h2>What to change</h2>
+    <ol class="changes bp-card" style="padding:0">
+      <!-- REPEAT per change, at most 5, ranked by impact. N counts up from 1. -->
+      <li id="chg-{{N}}"><span class="n">{{N}}</span>
+        <span class="t">{{WHAT TO DO}} <span class="bp-pill ok">This week</span><!-- or <span class="bp-pill">Bigger project</span> --></span>
+        <span class="w">{{WHY IT FITS THIS BUSINESS, ONE LINE}} <a href="#{{SOURCE_SLUG}}">See {{SOURCE_NAME}} ›</a></span>
+        <span class="pick"><label><input type="radio" name="chg-{{N}}" value="start">Start</label><label><input type="radio" name="chg-{{N}}" value="skip">Skip</label></span></li>
+      <!-- /REPEAT -->
+    </ol>
+    <div class="queue"><button type="button" class="bp-button" id="queue">Send my picks to Claude</button><span class="bp-muted" id="queue-status">Claude starts on the ones you mark Start.</span></div>
+  </div>
+
+  <div class="sec" id="side-by-side">
+    <h2>Side by side</h2>
+    <div class="bp-table-wrap"><table class="bp-table">
+      <thead><tr><th></th><th>Price</th><th>Promise</th><th>Next step</th><th>Proof</th></tr></thead>
+      <tbody>
+        <!-- First row is the member, when their site was read. Write "None shown" / "None found" as <td class="no">. -->
+        <tr class="you"><th><a href="#you">You</a></th><td>{{PRICE}}</td><td>“{{PROMISE}}”</td><td>{{NEXT STEP}}</td><td>{{PROOF}}</td></tr>
+        <!-- REPEAT per competitor -->
+        <tr><th><a href="#{{SLUG}}">{{COMPETITOR}}</a></th><td>{{PRICE}}</td><td>“{{PROMISE}}”</td><td>{{NEXT STEP}}</td><td>{{PROOF}}</td></tr>
+        <!-- /REPEAT -->
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- REPEAT per competitor -->
+<section id="v-{{SLUG}}" data-view="{{SLUG}}" class="sec" style="gap:28px" hidden>
+  <div class="sec">
+    <h1>{{COMPETITOR}}</h1>
+    <!-- The exact screenshot, saved next to this file. Pins sit at the element they point to,
+         as left/top percentages of the screenshot. At most 5 pins. -->
+    <button type="button" class="shot" id="{{SLUG}}-shot" aria-label="Open full-size screenshot">
+      <img src="shots/{{SLUG}}.jpg" alt="{{COMPETITOR}} home page as captured on {{DATE}}">
+      <span class="pin" style="left:{{X}}%;top:{{Y}}%">1</span>
+    </button>
+    <p class="cap"><span>{{DOMAIN}} · home page, captured {{DATE}}</span><span>Click to enlarge</span></p>
+  </div>
+  <div class="sec" id="{{SLUG}}-found">
+    <h2>What we found</h2>
+    <ol class="finds">
+      <li><span class="dot">1</span><span><b>{{FINDING}}</b><span class="bp-muted">{{THEIR EXACT WORDS, IN QUOTES, THEN WHAT IT MEANS}}</span></span></li>
+    </ol>
+  </div>
+  <div class="sec" id="{{SLUG}}-path">
+    <h2>How they get customers</h2>
+    <ol class="steps"><li>{{STEP}} <code>{{PATH}}</code></li></ol>
+  </div>
+  <div class="bp-callout sec" id="{{SLUG}}-take"><p class="bp-kicker">For your business</p><p>{{COPY THIS, OR DON'T COPY THIS, AND WHY}}</p></div>
+  <div class="sec">
+    <p class="bp-muted"><b>Couldn't see:</b> {{WHAT SITS BEHIND A SIGN-UP OR CALL, OR "Nothing. The whole path is public."}}</p>
+    <p class="src">Read: {{EVERY URL READ ON THIS SITE}}</p>
+  </div>
+</section>
+<!-- /REPEAT -->
+
+<section id="v-you" data-view="you" class="sec" style="gap:28px" hidden>
+  <!-- Same shape as a competitor view (screenshot, pins, What we found), then: -->
+  <div class="bp-callout sec" id="stand-apart"><p class="bp-kicker">Where you stand apart</p><p>{{WHAT ONLY THEY HAVE, AND WHERE TO SHOW IT}}</p></div>
+</section>
+
+</main>
+<footer class="foot"><span>Made with BuildPartner.ai</span><span>{{N_PAGES}} pages read · {{DATE}}</span></footer>
+
+<dialog id="zoom"><button type="button" class="bp-button" id="zoom-close">Close</button><img id="zoom-img" alt=""></dialog>
+
+<script>
+(function () {
+  var views = [].slice.call(document.querySelectorAll("[data-view]"));
+  var tabs = [].slice.call(document.querySelectorAll(".bp-tabs a"));
+  function show() {
+    var h = (location.hash || "#summary").slice(1);
+    if (!views.some(function (v) { return v.dataset.view === h; })) {
+      var el = document.getElementById(h);
+      var v = el && el.closest("[data-view]");
+      h = v ? v.dataset.view : "summary";
+    }
+    views.forEach(function (v) { v.hidden = v.dataset.view !== h; });
+    tabs.forEach(function (t) {
+      if (t.getAttribute("href") === "#" + h) t.setAttribute("aria-current", "page");
+      else t.removeAttribute("aria-current");
+    });
+  }
+  addEventListener("hashchange", function () { show(); scrollTo(0, 0); });
+  show();
+
+  var dlg = document.getElementById("zoom"), zi = document.getElementById("zoom-img");
+  document.querySelectorAll(".shot").forEach(function (s) {
+    s.addEventListener("click", function () {
+      var im = s.querySelector("img"); zi.src = im.src; zi.alt = im.alt;
+      if (dlg.showModal) dlg.showModal();
+    });
+  });
+  document.getElementById("zoom-close").addEventListener("click", function () { dlg.close(); });
+  dlg.addEventListener("click", function (e) { if (e.target === dlg) dlg.close(); });
+
+  var btn = document.getElementById("queue"), st = document.getElementById("queue-status");
+  btn.addEventListener("click", function () {
+    var items = [].slice.call(document.querySelectorAll("#changes li")).map(function (li) {
+      var c = li.querySelector("input:checked");
+      return c ? { id: li.id, label: li.querySelector(".t").firstChild.textContent.trim(), disposition: c.value } : null;
+    }).filter(Boolean);
+    if (!items.length) { st.textContent = "Mark at least one change Start or Skip first."; return; }
+    if (!window.buildpad || typeof window.buildpad.queuePrompt !== "function") {
+      st.textContent = "Not ready yet. Try again when the page has loaded."; return;
+    }
+    window.buildpad.queuePrompt("Act on my competitor research picks: start the ones marked start, drop the ones marked skip.", {
+      tag: "decision",
+      text: items.map(function (i) { return i.id + " " + i.disposition; }).join(", "),
+      element: document.getElementById("changes"),
+      data: { items: items }
+    });
+    st.textContent = "Queued. Press Send to Agent in the conversation panel.";
+    btn.disabled = true;
+  });
+})();
+</script>
+</body>
+</html>
