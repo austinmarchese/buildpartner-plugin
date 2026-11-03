@@ -17,14 +17,29 @@ rem
 rem Usage (same as bp-node):  bp-node --npx <npx args...>  or  bp-node <script.mjs> [args...]
 
 setlocal
-set "BP_NPX=npx"
-where npx >nul 2>nul || if exist "%ProgramFiles%\nodejs\npx.cmd" set "BP_NPX=%ProgramFiles%\nodejs\npx.cmd"
-set "BP_NODE=node"
-where node >nul 2>nul || if exist "%ProgramFiles%\nodejs\node.exe" set "BP_NODE=%ProgramFiles%\nodejs\node.exe"
+rem npx must be called by its full path. npx.cmd finds npx-cli.js through
+rem %~dp0, and `call "npx"` (a bare name in quotes) makes %~dp0 the current
+rem folder, so npx died with "Cannot find module ...\node_modules\npm\bin\
+rem npx-cli.js" from whatever project Claude was opened in (Nov 3 2026).
+set "BP_NPX="
+rem npx.exe covers Volta, whose shims are .exe files.
+for /f "delims=" %%p in ('where $PATH:npx.cmd 2^>nul') do if not defined BP_NPX set "BP_NPX=%%p"
+if not defined BP_NPX for /f "delims=" %%p in ('where $PATH:npx.exe 2^>nul') do if not defined BP_NPX set "BP_NPX=%%p"
+if not defined BP_NPX if exist "%ProgramFiles%\nodejs\npx.cmd" set "BP_NPX=%ProgramFiles%\nodejs\npx.cmd"
+rem $PATH: makes where skip the current folder, so a project never shadows them.
+set "BP_NODE="
+for /f "delims=" %%p in ('where $PATH:node.exe 2^>nul') do if not defined BP_NODE set "BP_NODE=%%p"
+if not defined BP_NODE if exist "%ProgramFiles%\nodejs\node.exe" set "BP_NODE=%ProgramFiles%\nodejs\node.exe"
+if not defined BP_NODE set "BP_NODE=node"
 
 if /i not "%~1"=="--npx" (
   "%BP_NODE%" %*
   exit /b
+)
+
+if not defined BP_NPX (
+  echo BuildPartner: npx was not found. Install Node.js LTS from https://nodejs.org, then restart Claude. 1>&2
+  exit /b 1
 )
 
 rem Drop the leading --npx and pass the rest to npx unchanged.
