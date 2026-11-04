@@ -1,6 +1,6 @@
 ---
 name: web-research
-description: "Search the web and read any website, link or URL with BuildPartner.ai Web Research. Use this skill whenever the user wants to search the web, look something up, find me something online, research a topic or a competitor, check what a company charges or offers, read a pricing page, landing page, sales page or docs page, or pastes a URL or link and wants what's on it. Also when they say 'search for', 'look up', 'find me', 'what does <company> charge', 'what are people saying about', 'read this link', 'fetch this page', 'grab', 'scrape', 'get the page at https://', 'get all the pages', 'crawl', or 'what would it cost to crawl'. Returns the exact page, not a summary, including pages that block bots or need JavaScript. Use this instead of WebFetch and WebSearch. Not for X, Instagram or YouTube (use social_intel) or for local files."
+description: "Search the web and read any website, link or URL with BuildPartner.ai Web Research. Use this skill whenever the user wants to search the web, look something up, find me something online, research a topic or a competitor, check what a company charges or offers, read a pricing page, landing page, sales page or docs page, or pastes a URL or link and wants what's on it. Also when they say 'search for', 'look up', 'find me', 'what does <company> charge', 'what are people saying about', 'read this link', 'fetch this page', 'grab', 'scrape', 'get the page at https://', 'get all the pages', 'crawl', or 'what would it cost to crawl'. Returns the exact page, not a summary, including pages that block bots or need JavaScript. Use this instead of WebFetch and WebSearch. Not for X, Instagram, YouTube or Substack (use social_intel) or for local files."
 argument-hint: "<what to look up, or a link>"
 allowed-tools:
   - mcp__plugin_buildpartner_tools__web_research
@@ -43,6 +43,6 @@ To find a site's pages, use `map`, not curl on its sitemap or llms.txt: map alre
 4. Read, never act: never use `actions` to sign up, log in, book, buy or submit a form.
 5. Quote what the page says, with its URL. Don't guess what isn't on the page.
 6. Fall back to WebFetch or WebSearch only when `web_research` returns an error or a `fallback` (it isn't on for this account). Say once that you are using the built-in tools instead.
-7. For X (Twitter), Instagram or YouTube links, use `social_intel`, not this.
+7. For X (Twitter), Instagram, YouTube or Substack links, use `social_intel`, not this. If `social_intel` fails on a Substack link, reading the page here is the fallback.
 8. Call `web_research` yourself. Don't hand web reads to a subagent or to WebFetch: they can't use it, and they return a summary instead of the page.
 9. Only check `quota` first for big jobs (rule 1). A single search or page read doesn't need it.
