@@ -18,7 +18,7 @@ This skill is adapted from [Lavish Editor](https://github.com/kunchenguid/lavish
 
 $ARGUMENTS
 
-If the request starts with `reconnect` followed by a pad link, the user pressed **Reconnect agent** on a pad whose agent stopped watching: follow Reconnecting below, and do not build a new page.
+If the request starts with `reconnect` followed by a pad link, the user pressed **Wake Claude** on a pad whose agent stopped watching: follow Reconnecting below, and do not build a new page.
 Otherwise, if the request above is non-empty, the user ran this skill on purpose: build a page for that request now, following the steps below.
 If it is empty, work out what to show from the conversation.
 
@@ -50,6 +50,7 @@ Every call takes an `action`. The tool reads the page from this machine and sign
   `summary` is one line (at most 200 characters) the reviewer sees on "Revision N published".
   `changes` is a list (at most 50) of `{kind, target, label, answers}`: `kind` is `added`, `modified` or `removed`, `target` is the changed block's `#id`, `label` is a one-line summary, and `answers` (optional) lists the numeric `id`s of the feedback items this change addresses. The reviewer gets a checklist of these changes, each one jumping to its block.
 - `poll` with `pad_id` waits up to 45 seconds for feedback and returns as soon as some arrives: `{items: [...]}`. Item kinds: `comment`, `prompt`, `chat`, and `edit` (the user typed over text on the page). Empty `items` means nothing yet. A dropped connection or a server hiccup is checked again inside the wait and at worst comes back as an empty result with a `note`, never a reason to stop watching.
+- `watch` with `pad_id` returns a shell `command` that waits for feedback in the background, at no token cost, for up to an hour (see step 4).
 - `ack` with `pad_id` and `note` tells the reviewer you have started on the last batch.
 - `reply` with `pad_id` and `text` posts your reply in the page's conversation panel.
 - `end`, `delete`, `share`, `unshare` with `pad_id`: close the review, delete the pad now, let anyone with the link view and comment, or make it private again.
@@ -71,11 +72,13 @@ Limits: 2 MB per version, 50 files, and 20 MB across all of a member's pads. Kee
    Give the user the link with one or two sentences on what the page shows. Tell them it is private for now (if the page asks them to sign in, they sign in to BuildPartner.ai and land back on it), and that pressing **Share** at the top, or asking you, lets anyone with the link view and comment. It is deleted 14 days after the last activity. Keep the `pad_id` for every later call.
    The first time they open a pad (or the BuildPad page on their dashboard), BuildPartner.ai shows a short card on how BuildPad handles their data, which they approve once. Until they do, their comments arrive with `from_owner: false`, so you only change the page. If they ask why you did not act on a request, tell them to press **Got it** on that card and send it again.
    Only `share` when the user asks you to share the pad.
-4. **Watch for feedback.** Call `build_pad` with `action: "poll"` and the `pad_id`.
+4. **Watch for feedback.** First call `build_pad` with `action: "poll"`, `pad_id` and `wait_seconds: 0` to pick up anything already waiting. If it has items, go to step 5.
+   Otherwise watch in the background, which costs no tokens: call `build_pad` with `action: "watch"` and the `pad_id`, run the `command` it returns as a **background** shell command, tell the user in one line that you are watching the page, and end your turn. It checks every 10 seconds for up to an hour and keeps the page showing you as connected. When it finishes, its last line says what happened: on new feedback or an ended review, call `poll` and carry on from here; after an hour with nothing new, tell the user in one line that you stopped watching and that **Wake Claude** on the page brings you back. While it runs, the user can keep talking to you here as normal; start a new `watch` only if the last one has finished.
+   If you have no way to run a background command, or running it is refused, watch by calling `poll` instead:
    Empty `items` without `ended: true` means nothing came in yet: call `poll` again, right away.
    `ended: true` means the reviewer ended the review: stop watching. If that result also has items, do steps 5 to 7 once for them, then step 8.
    A poll that errors or comes back with a `note`: call it again; nothing is lost.
-   **Keep watching until the review ends.** The page shows the reviewer whether you are still checking, and they only get answers while you are. When anything else pulls you away (a question in chat, research, a long command), go back to this step as soon as it is done, in the same turn. Never finish your turn with the review still open unless the user tells you to stop watching.
+   **Keep watching until the review ends.** The page shows the reviewer whether you are still checking, and they only get answers while you are. With the background command, ending your turn is fine: it keeps watching. Polling instead, when anything else pulls you away (a question in chat, research, a long command), go back to this step as soon as it is done, in the same turn, and never finish your turn with the review still open unless the user tells you to stop watching.
    Answers a reviewer picked inside the page (see Decisions below) arrive as `prompt` items once they press **Send to Agent**. The answer and any `Context data:` JSON are in the item's `text`.
 5. **Acknowledge right away, before working on it.** (A batch of only `edit` items needs no ack, update or reply: apply them as in step 6 and go back to step 4.) Call `build_pad` with `action: "ack"` and a `note` like "Reading your comments and updating the page." If ack fails, call it again or tell the user before editing, so the page never says you are working when the server did not hear it.
 6. **Act on each item, only by changing the page.**
@@ -103,7 +106,7 @@ Limits: 2 MB per version, 50 files, and 20 MB across all of a member's pads. Kee
 
 ## Reconnecting
 
-The reviewer page shows **Agent offline** when no session has checked a pad for a while, and its **Reconnect agent** button gives the user a command to paste here, ending in `reconnect <pad link>`. Pick the review back up:
+The reviewer page shows **Offline** when no session has checked a pad for a while, and its **Wake Claude** button gives the user a command to paste here, ending in `reconnect <pad link>`. Pick the review back up:
 
 1. Call `build_pad` with `action: "list"` and find the pad whose `url` ends with the same `/pad/<code>` as the link (ignore the host: `www.` or a local address may differ). If none matches, tell the user the pad was not found on their account (it may have been deleted, or made by someone else) and stop.
 2. Tell the user in one line that you are watching the pad again.
