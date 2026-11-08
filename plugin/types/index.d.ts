@@ -133,6 +133,8 @@ declare module 'claude-code' {
       appliedNow: Shaped<string[]>
       notices: Shaped<TeamNotice[]>
       isWelcomed: boolean
+      isListOpen: boolean
+      listAt: number
     }
   }
 }

@@ -28,6 +28,8 @@ import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPl
 type Dollar = EngineInterface
 
 const SESSIONS_BAR = 3
+// Most suggestions waiting at once: a short list the member actually goes through.
+const MAX_WAITING = 3
 const DEFAULTS = { enabled: true, hidden: false, every: 15, model: 'opus', selfOn: true, expertOn: true, barItemsOff: ['founder'] as string[] }
 const MIN_GAP_MS = 60_000
 const SLICE_MESSAGES = 200
@@ -62,6 +64,10 @@ const bpTools = atom({ plugin: 'bp-dev', key: 'bpTools' } as const, [] as string
 const hiddenAtom = atom({ plugin: 'bp-dev', key: 'hiddenItems' } as const, ['founder'] as string[], { shape: 'hi-2' })
 const isHidden = atom({ plugin: 'bp-dev', key: 'isHidden' } as const, false)
 const isExpanded = atom({ plugin: 'bp-dev', key: 'isExpanded' } as const, false)
+// The suggestions card is open right above the bar (the bar's "N suggestions" button).
+const isListOpen = atom({ plugin: 'bp-dev', key: 'isListOpen' } as const, false)
+// Which suggestion the row above the bar shows (Next moves it on).
+const listAt = atom({ plugin: 'bp-dev', key: 'listAt' } as const, 0)
 // The first-run look at past sessions has run (or been skipped) for this member.
 const scanned = atom({ plugin: 'bp-dev', key: 'scanned' } as const, false)
 // Lessons the member approved in this session: added to this session's instructions at once.
@@ -104,6 +110,11 @@ function today(now: number): string {
 /** Dev builds are named bp-dev (or bp-local while testing from a working copy). */
 function isDevBuild($: Dollar): boolean {
   return $.plugin.name.startsWith('bp-')
+}
+
+/** Which copy of the bar is running, for the tag after the name: LOC (bp-local), DEV (bp-dev), none in prod. */
+function buildTag($: Dollar): string {
+  return $.plugin.name === 'bp-local' ? 'LOC' : isDevBuild($) ? 'DEV' : ''
 }
 
 // ---- the member's sign-in (the same file the skills and CLI use) ----
@@ -163,11 +174,13 @@ Rules:
 - If an item is the same lesson as one in KNOWN PATTERNS, reuse its id exactly. Otherwise mint a short kebab-case id naming the lesson (not the task).
 - Report a lesson the first time you see it. You do NOT apply the "recurs 3+ times" bar: a ledger counts sightings across sessions and only shows the member a lesson once it recurs. A lesson the member had to state twice in one slice is a strong sighting.
 - Skip one-off task details, the content being written, and anything about this coach itself. A lesson is something a skill or file should do differently EVERY time.
-- If nothing qualifies, return {"items":[]}. At most 3 items, strongest first.
+- High signal only. Report a lesson only if the member would clearly press "Add" when shown it: a rule they would want in a file every session, not a moment of frustration, a question, a one-time instruction, a fix Claude already made in code, or something their files already say. When in doubt, leave it out: an empty list is a good result.
+- confidence: "high" only when the member stated the rule plainly or corrected the same thing more than once and it clearly applies beyond this task; "medium" when it is likely but inferred; "low" otherwise.
+- If nothing qualifies, return {"items":[]}. At most 2 items, strongest first.
 
 Separately, EXPERT: if the member's latest messages weigh a decision where an expert framework would change the answer (pricing, an offer, a launch, positioning, a sales page, a hire, what to cut), and no expert was already asked in the slice, name it. Categories: sales, marketing, content, product, business-strategy, ai-automation, persuasion, copywriting, mindset. The question is one sentence in the member's terms that an expert could answer cold. topic names the decision in 2 to 5 plain words (e.g. "Starter tier pricing"). Otherwise expert is null. Code questions, file edits and mechanics never qualify.
 
-Reply with JSON only: {"items":[{"id":"...","type":"skill_fix|instruction|new_skill|wiki","target":"...","change":"...","evidence":"...","is_explicit_correction":false}],"expert":null | {"category":"...","topic":"...","question":"..."}}`
+Reply with JSON only: {"items":[{"id":"...","type":"skill_fix|instruction|new_skill|wiki","target":"...","change":"...","evidence":"...","is_explicit_correction":false,"confidence":"high|medium|low"}],"expert":null | {"category":"...","topic":"...","question":"..."}}`
 
 // The member's own pushback, read off their latest prompt.
 const CORRECTION =
@@ -311,6 +324,7 @@ type Item = {
   change: string
   evidence: string
   is_explicit_correction: boolean
+  confidence?: 'high' | 'medium' | 'low'
 }
 
 const CATEGORIES = ['sales', 'marketing', 'content', 'product', 'business-strategy', 'ai-automation', 'persuasion', 'copywriting', 'mindset']
@@ -348,7 +362,8 @@ function parseItems(raw: unknown): Item[] {
         i.evidence.trim().length > 0 &&
         TYPES.includes(i.type as ReflectPatternType),
     )
-    .slice(0, 3)
+    .map(i => ({ ...i, confidence: i.confidence === 'high' || i.confidence === 'medium' ? i.confidence : 'low' }) as Item)
+    .slice(0, 2)
 }
 
 async function projectSkills($: Dollar, cwd: string): Promise<string[]> {
@@ -469,8 +484,22 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
         lastSeen: now,
         status: before?.status ?? 'watching',
       }
-      const earns = entry.sessions.length >= SESSIONS_BAR || entry.corrections >= 1
-      if (entry.status === 'watching' && earns) {
+      // High signal: a suggestion the member is likely to apply, not filler. Rule of thumb: it has
+      // come up at least twice (two corrections, or two sessions) before the member sees it.
+      // - high confidence: twice;
+      // - medium: three separate sessions, or two corrections;
+      // - low: never shown, it only keeps counting.
+      // The member never sees the confidence, only the suggestion.
+      // And at most MAX_WAITING suggestions wait at once; the rest keep counting until there is room.
+      const c = item.confidence ?? 'low'
+      const earns =
+        c === 'high'
+          ? entry.corrections >= 2 || entry.sessions.length >= 2
+          : c === 'medium'
+            ? entry.sessions.length >= SESSIONS_BAR || entry.corrections >= 2
+            : false
+      const waiting = Object.values(map).filter(x => x.status === 'suggested').length + promoted.length
+      if (entry.status === 'watching' && earns && waiting < MAX_WAITING) {
         entry.status = 'suggested'
         promoted.push(entry)
       }
@@ -484,9 +513,10 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
     if (!past) await update($, cursor, () => ({ sessionId, upTo: all.length }))
     await update($, last, () => ({ at: now, seen, promoted: promoted.length, tokens }))
 
-    // New suggestions, or a review the member asked for: the card comes into the conversation by itself.
-    // (Not from Claude's own tool call, which reads the answer instead.)
-    if (why !== 'tool' && why !== 'past' && (promoted.length > 0 || why === 'asked')) {
+    // A review the member asked for goes straight into the walk-through. New suggestions from an
+    // automatic review only update the count in the bar: the command starts a Claude reply, so it
+    // never runs unasked.
+    if (why === 'asked') {
       $.clock.after(0, () => void showSuggestions($))
     }
     return `Reviewed ${memberLines} of your messages (${slice.length} chars, ${tokens} tokens): ${seen} pattern${seen === 1 ? '' : 's'} seen, ${promoted.length} new suggestion${promoted.length === 1 ? '' : 's'}.${lines.length ? `\n${lines.join('\n')}` : ''}${parsed.expert ? `\nWorth asking an expert (${parsed.expert.category}): ${parsed.expert.question}` : ''}`
@@ -537,12 +567,13 @@ async function handOver($: Dollar, text: string, mode: 'replace' | 'append' | 'p
   return copied.isCopied
 }
 
+// The kind of improvement, shown first on every suggestion (the bucket it falls in).
 const TYPE_LABEL: Record<string, string> = {
-  skill_fix: 'Skill rule',
-  instruction: 'CLAUDE.md rule',
+  skill_fix: 'Skill improvement',
   new_skill: 'New skill',
-  wiki: 'Wiki note',
-  framework: 'Framework',
+  instruction: 'CLAUDE.md rule',
+  wiki: 'Knowledge base update',
+  framework: 'New framework',
 }
 
 function why(p: ReflectPattern): string {
@@ -584,8 +615,30 @@ async function walkThrough($: Dollar): Promise<void> {
 }
 
 /** Shows the pending suggestions as a card in the conversation (the /bp-dev:plugin suggestions row). */
+/** The bar's "N suggestions": posts the suggestions card in the conversation. The command runs a moment after the press: run inside the press itself it is refused (the same deferral the automatic card after a review uses). */
+async function toggleList($: Dollar): Promise<void> {
+  // The card with Apply and Dismiss draws right above the bar: instant, no Claude reply.
+  // (/bp-dev:plugin suggestions stays for a walk-through with Claude.)
+  await update($, isExpanded, () => false)
+  await update($, isListOpen, open => !open)
+}
+
 async function showSuggestions($: Dollar): Promise<void> {
-  await attempt(() => $.command.run({ command: 'plugin', args: 'suggestions' }), null)
+  const list = await attempt(() => read($, pending), [] as ReflectPattern[])
+  // Nothing waiting: say so at once, without starting a Claude reply.
+  if (list.length === 0) {
+    $.ui.toast(`${NAME}: nothing waiting. New suggestions show up in the bar.`)
+    return
+  }
+  // The command has Claude read this file. Arguments show raw in the member's message, so they
+  // stay one word: neither the list nor an @path goes in them.
+  await writeSuggestionsFile($, list)
+  const args = 'suggestions'
+  const ok = await $.command.run({ command: `${$.plugin.name}:plugin`, args }).then(
+    () => true,
+    () => false,
+  )
+  if (!ok) $.ui.toast(`${NAME}: could not open your suggestions. Run /${$.plugin.name}:plugin suggestions`)
 }
 
 const DEMO: ReflectPattern = {
@@ -1282,6 +1335,8 @@ type View = {
   run: ReflectRun | null
   ex: ExpertFlag | null
   tip: ToolTip | null
+  listOpen: boolean
+  listAt: number
   /** The two halves of the bar, each with its own switch. */
   selfOn: boolean
   expertOn: boolean
@@ -1303,6 +1358,7 @@ type View = {
   scanning: boolean
   health: BarHealth | null
   dev: boolean
+  tag: string
   pluginName: string
   surface: string
   now: number
@@ -1399,13 +1455,8 @@ export const register: Register = on => {
       await saveLedger($, await ledger($))
     }, undefined)
     // Each registration stands alone: a refused command never costs the tool.
-    await $.command
-      .register({
-        name: 'plugin',
-        description: `${NAME}: expand or collapse the bar. Args: on, off, now, hide, show, dashboard, coach, scan, welcome, notices, every <n>, model <sonnet|haiku>, reset-dismissed`,
-        immediate: true,
-      })
-      .catch(() => undefined)
+    // /bp-dev:plugin ships as a file in the plugin (plugin/commands/plugin.md), so it
+    // is always there with the plugin's prefix; the command.run hook below answers it.
     await $.tool
       .register({
         name: 'resolve_suggestion',
@@ -1498,8 +1549,9 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const ours = e.tool === `mcp__${$.plugin.name}__resolve_suggestion` || e.tool === `mcp__${$.plugin.name}__review_now`
     if (!ours) {
-      const call = e as unknown as { tool: string; input: unknown }
-      $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call.input), undefined))
+      // The tool's arguments sit beside `tool` on the event (e.url for WebFetch).
+      const call = e as unknown as { tool: string }
+      $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call), undefined))
       return next(e)
     }
     try {
@@ -1509,8 +1561,12 @@ export const register: Register = on => {
     }
   }).catch(($, e, next) => next(e))
 
+  // /bp-dev:plugin: a matcher on its own literal name, so Claude Code routes the
+  // command here (a hook with no matcher was never asked: "no command.run hook answered it").
+  // /bp-dev:plugin (bp-dev:plugin in dev): shipped as plugin/commands/plugin.md and answered here, so
+  // its file text only reaches Claude when the bar is not running.
   on('command.run', async ($, e, next) => {
-    if (!/(^|[:/])plugin$/.test(e.command)) return next(e)
+    if (e.command !== `${$.plugin.name}:plugin`) return next(e)
     try {
       return await barCommand($, e)
     } catch {
@@ -1520,7 +1576,7 @@ export const register: Register = on => {
 
   // /bp-dev:plugin suggestions: the row in the conversation, drawn as a card.
   on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
-    if (!/(^|[:/])plugin$/.test(e.props.command) || e.props.args.trim() !== 'suggestions') return next(e)
+    if (e.props.command !== `${$.plugin.name}:plugin` || e.props.args.trim() !== 'suggestions') return next(e)
     try {
       const list = await read($, pending)
       const D = $.ui.resolve(e)
@@ -1552,6 +1608,8 @@ export const register: Register = on => {
           run: await attempt(() => read($, last), null),
           ex: await attempt(() => read($, expert), null),
           tip: await attempt(() => read($, toolTip), null),
+          listOpen: await attempt(() => read($, isListOpen), false),
+          listAt: await attempt(() => read($, listAt), 0),
           ...(await attempt(async () => {
             const st = await settings($)
             return { selfOn: st.selfOn, expertOn: st.expertOn }
@@ -1565,6 +1623,7 @@ export const register: Register = on => {
           scanning: await attempt(() => read($, isScanning), false),
           health: await attempt(() => read($, health), null),
           dev: isDevBuild($),
+          tag: buildTag($),
           pluginName: $.plugin.name,
           surface: e.surface,
           now,
@@ -1577,6 +1636,8 @@ export const register: Register = on => {
         const shown = withPreview({ ...v, preview: pv }, pv)
         const toggle = async () => {
           const open = await update($, isExpanded, x => !x)
+          // One panel at a time: the settings close the suggestions, and the other way round (toggleList).
+          if (open) await update($, isListOpen, () => false)
           if (open) $.clock.after(0, () => void attempt(() => refreshHealth($), undefined))
         }
         const D = $.ui.resolve(e)
@@ -1604,7 +1665,8 @@ export const register: Register = on => {
 async function ownTool($: Dollar, e: { tool: string; input: unknown }): Promise<{ result: string }> {
   {
     if (e.tool === `mcp__${$.plugin.name}__resolve_suggestion`) {
-      const input = e.input as { id?: unknown; decision?: unknown }
+      // The engine spreads a tool's arguments beside `tool` on the event (no `input` key).
+      const input = ((e as { input?: unknown }).input ?? e) as { id?: unknown; decision?: unknown }
       const id = typeof input.id === 'string' ? input.id : ''
       const decision = input.decision === 'applied' ? 'applied' : input.decision === 'dismissed' ? 'dismissed' : null
       if (!id || !decision) return { result: 'Pass an id from the suggestions file and decision "applied" or "dismissed". "Not now" needs no call.' }
@@ -1749,10 +1811,10 @@ function when(now: number, at: number | string | null): string {
 }
 
 /** One word per Self-improving state, used everywhere it shows. */
-function selfState(v: View): { word: 'On' | 'Off' | 'Checking…'; color: string } {
+function selfState(v: View): { word: 'On' | 'Off' | 'Running'; color: string } {
   // Off when paused (older installs) or when Self-Improving is switched off.
   if (!v.enabled || !v.selfOn) return { word: 'Off', color: MUTED }
-  if (v.busy) return { word: 'Checking…', color: CAUTION }
+  if (v.busy) return { word: 'Running', color: CAUTION }
   return { word: 'On', color: GOOD }
 }
 
@@ -1859,17 +1921,20 @@ function withPreview(v: View, key: string): View {
   }
 }
 
-/** Dev builds only: what the team needs while testing. */
-function debugLines(v: View): string[] {
+/** Dev builds only: what the team needs while testing, as name and value rows. */
+function debugLines(v: View): [string, string][] {
   const h = v.health
   const run = v.run
   return [
-    `plugin ${v.pluginName}${h?.version ? ` v${h.version}` : ''} · Claude Code ${h?.ccVersion ?? '?'}`,
-    `surface ${v.surface || '?'} · api ${h?.apiBase ?? '?'} · signed in ${h?.isSignedIn ? `as ${h.account ?? 'unknown account'}` : 'no'}`,
-    `tools ${v.tools.join(', ') || 'none found'}`,
-    `self-improving ${selfState(v).word} · ${v.watch.length} watching · ${v.list.length} pending · last run ${run ? `${ago(v.now, run.at)} (${run.seen} seen, ${run.promoted} promoted${run.tokens ? `, ${run.tokens} tokens` : ''}${run.note ? `, ${run.note}` : ''})` : 'none'}`,
-    `health gathered ${h ? ago(v.now, h.at) : 'not yet'}`,
-    `previewing: ${PREVIEWS.find(x => x.key === (v.preview ?? ''))?.label ?? v.preview}`,
+    ['Plugin', `${v.pluginName}${h?.version ? ` v${h.version}` : ''} · Claude Code ${h?.ccVersion ?? '?'}`],
+    ['Signed in', h?.isSignedIn ? `${h.account ?? 'unknown account'} · ${h.apiBase ?? '?'}` : 'no'],
+    ['Surface', v.surface || '?'],
+    ['Tools', v.tools.join(', ') || 'none found'],
+    [
+      'Self-Improving',
+      `${selfState(v).word} · ${v.watch.length} watching · ${v.list.length} waiting · last run ${run ? `${ago(v.now, run.at)} (${run.seen} seen, ${run.promoted} shown${run.tokens ? `, ${run.tokens} tokens` : ''}${run.note ? `, ${run.note}` : ''})` : 'none'}`,
+    ],
+    ['Health', h ? `gathered ${ago(v.now, h.at)}` : 'not gathered yet'],
   ]
 }
 
@@ -1911,109 +1976,65 @@ function customizeGroups(v: View): { title: string; items: { key: string; label:
 function details($: Dollar, D: Elements, v: View) {
   const { Box, Text, Button } = D
   const Svg = svgOf(D)
-  const section = (key: string, title: string, children: unknown[]) => (
+  const desktop = v.surface === 'desktop'
+  // The suggestion row's look, for every section: a copper title, then rows with what it is on the
+  // left (bold name, dim line) and its control on the right. No box inside a box.
+  const section = (key: string, title: string, note: string, children: unknown[]) => (
     <Box key={key} flexDirection="column" flexGrow={1} minWidth={30} borderStyle="round" borderColor="promptBorder" paddingX={1} rowGap={1}>
-      <Text bold dimColor>
-        {title.toUpperCase()}
+      <Text wrap="wrap">
+        <Text bold color={LOGO_TINT}>
+          {title}
+        </Text>
+        {note ? <Text dimColor> · {note}</Text> : ''}
       </Text>
       {children as JSX.Element[]}
     </Box>
   )
-  // One half of the system: its name and switch on top, then (only while on) what it found.
-  // A Button holds only text, so the switch is drawn in glyphs: knob right and green when on.
-  // A box inside the section's box reads as clutter in the terminal, so the border is desktop-only.
-  const desktop = v.surface === 'desktop'
-  const frame = desktop ? { borderStyle: 'round' as const, borderColor: LINE, paddingX: 1 } : { paddingLeft: 1 }
-  const halfBlock = (key: 'selfOn' | 'expertOn', name: string, hint: string, on: boolean, body: unknown[]) => (
-    <Box key={`coach-${key}`} flexDirection="column" rowGap={1} {...frame}>
-      <Box flexDirection="row" alignItems="center" columnGap={2}>
-        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-          <Text bold>{name}</Text>
-          <Text dimColor wrap="wrap">{hint}</Text>
-        </Box>
-        <Button key={`coach-toggle-${key}`} plain onPress={() => saveSettings($, on ? { [key]: false } : { [key]: true, enabled: true })}>
-          {on ? <Text color={GOOD}>━━●</Text> : <Text dimColor>●━━</Text>} <Text bold={on} dimColor={!on}>{on ? 'On' : 'Off'}</Text>
-        </Button>
+  const row = (key: string, name: string, line: string, control: unknown) => (
+    <Box key={key} flexDirection="row" alignItems="center" columnGap={2}>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <Text bold>{name}</Text>
+        {line ? <Text dimColor wrap="wrap">{line}</Text> : ''}
       </Box>
-      {(on ? body : []) as JSX.Element[]}
+      {control as JSX.Element}
     </Box>
   )
-  const progress = (n: number) => Array.from({ length: SESSIONS_BAR }, (_, i) => (i < n ? '●' : '○')).join('')
+  // A Button holds only text, so a switch is drawn in glyphs: knob right and green when on.
+  const toggle = (key: string, on: boolean, press: () => unknown) => (
+    <Button key={key} plain onPress={press}>
+      {on ? <Text color={GOOD}>━━●</Text> : <Text dimColor>●━━</Text>} <Text bold={on} dimColor={!on}>{on ? 'On' : 'Off'}</Text>
+    </Button>
+  )
   const anyOn = v.enabled && (v.selfOn || v.expertOn)
   const armed = offArmedAt > 0 && v.now - offArmedAt <= 5_000
   const isFresh = v.watch.length === 0 && v.list.length === 0
   const out = isOutOfRuns(v.plan)
+  const status = !anyOn ? 'Off' : v.busy ? 'Running' : `On · ${v.run ? `last check ${ago(v.now, v.run.at)}` : 'no check yet'}`
+  const selfLine = v.scanning
+    ? `Reading your last ${PAST_SESSIONS} sessions in this project…`
+    : isFresh
+      ? 'Nothing noticed yet. It checks every ' + DEFAULTS.every + ' turns and after you correct Claude.'
+      : `Watching ${v.watch.length} ${v.watch.length === 1 ? 'pattern' : 'patterns'}. One becomes a suggestion once it comes up twice.`
   return (
     <Box flexDirection="column" rowGap={1} marginTop={1}>
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
-        {section('d-self', 'Self-Improving System', [
-          // The reviewer's status, then one block per half with its own switch and what it found.
-          <Text>
-            <Text bold color={anyOn ? (v.busy ? CAUTION : GOOD) : MUTED}>
-              ● {anyOn ? (v.busy ? 'Checking…' : 'On') : 'Off'}
-            </Text>
-            <Text dimColor>
-              {!anyOn
-                ? ' · turn on Self-Improving or Expert Advice to start'
-                : ` · checks every ${DEFAULTS.every} turns and after you correct Claude · ${v.run ? `last check ${ago(v.now, v.run.at)}` : 'no check yet'}`}
-            </Text>
-          </Text>,
-          halfBlock('selfOn', 'Self-Improving', 'Suggests skills to create or improve from how you work.', v.selfOn, [
-            isFresh ? (
-              <Text dimColor wrap="wrap">
-                {v.scanning
-                  ? `Reading your last ${PAST_SESSIONS} sessions in this project…`
-                  : v.scanned
-                    ? 'Nothing noticed yet.'
-                    : `Nothing noticed yet. Start with your last ${PAST_SESSIONS} sessions in this project.`}
-              </Text>
-            ) : (
-              <Text>
-                <Text bold>{v.watch.length}</Text> <Text dimColor>noticed · a suggestion is ready after 3 sessions or 1 correction ·</Text>{' '}
-                <Text bold color={v.list.length > 0 ? CLAY : undefined}>{v.list.length}</Text> <Text dimColor>ready</Text>
-              </Text>
-            ),
-            ...v.watch.slice(0, Math.max(2, Math.min(4, v.rows - 14))).map(p => (
-              <Text>
-                <Text color={GOOD}>{progress(p.sessions.length)}</Text> <Text dimColor>{cut(`${targetLabel(p.target)}: ${p.change}`, 60)}</Text>
-              </Text>
-            )),
-            <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
-              {v.list.length > 0 ? (
-                <Button
-                  key="review-from-details"
-                  label={`See ${v.list.length} ready`}
-                  variant="primary"
-                  onPress={async () => (await update($, isExpanded, () => false), await showSuggestions($))}
-                />
-              ) : (
-                ''
-              )}
-              {!v.scanned || v.scanning ? (
-                <Button
-                  key="scan-past"
-                  label={v.scanning ? 'Reading past sessions…' : `Learn from my last ${PAST_SESSIONS} sessions`}
-                  onPress={() => (v.scanning ? undefined : scanPast($))}
-                />
-              ) : (
-                ''
-              )}
-            </Box>,
-          ]),
-          halfBlock('expertOn', 'Expert Advice', 'Flags business decisions worth asking an expert about.', v.expertOn, [
-            v.ex ? (
-              <Text wrap="wrap">
-                <Text dimColor>Flagged: </Text>
-                {v.ex.question}
-              </Text>
-            ) : (
-              <Text dimColor>Nothing flagged yet.</Text>
-            ),
-          ]),
-          !anyOn ? (
-            ''
+        {section('d-self', 'Self-Improving System', status, [
+          row('self-row', 'Self-Improving', v.selfOn ? selfLine : 'Suggests skills to create or improve from how you work.', toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))),
+          v.selfOn && (!v.scanned || v.scanning) ? (
+            <Box key="self-scan" flexDirection="row">
+              <Button key="scan-past" label={v.scanning ? 'Reading past sessions…' : `Learn from my last ${PAST_SESSIONS} sessions`} onPress={() => (v.scanning ? undefined : scanPast($))} />
+            </Box>
           ) : (
-            <Box flexDirection="row">
+            ''
+          ),
+          row(
+            'expert-row',
+            'Expert Advice',
+            v.expertOn && v.ex ? `Flagged: ${v.ex.question}` : 'Flags business decisions worth asking an expert about.',
+            toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true })),
+          ),
+          anyOn ? (
+            <Box key="now-row" flexDirection="row">
               <Button
                 key="now"
                 label={v.busy && !v.scanning ? 'Reviewing this session…' : 'Review this session now'}
@@ -2024,64 +2045,59 @@ function details($: Dollar, D: Elements, v: View) {
                 }}
               />
             </Box>
-          ),
-        ])}
-        {section('d-tools', 'Additional tools', [
-          // Everything that used to sit on the bar's second row: one press starts a prompt with the tool.
-          v.plan?.hasCoach ? (
-            <Box key="tool-coach" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
-              <Button key="message-coach" label="Message Coach" onPress={() => messageCoach($)} />
-              <Text dimColor>Opens your coach chat on {NAME}.</Text>
-            </Box>
           ) : (
             ''
           ),
+        ])}
+        {section('d-tools', 'Additional tools', out ? 'free runs used up' : 'each starts a prompt with the tool', [
+          v.plan?.hasCoach ? row('tool-coach', 'Message Coach', `Opens your coach chat on ${NAME}.`, <Button key="message-coach" label="Open" onPress={() => messageCoach($)} />) : '',
           ...BP_TOOLS.map(t => {
             // connectedTools fills in the plugin that serves the tool (bp-dev or buildpartner).
             const live = connectedTools(v).find(c => c.key === t.key)
-            return live ? (
-              <Box key={`tool-${t.key}`} flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
-                <Button key={`tool-btn-${t.key}`} label={t.label} onPress={() => creditTool($, () => handOver($, live.prompt, 'prepend'))} />
-                <Text dimColor wrap="truncate">{out && CREDIT_ITEMS.includes(t.key) ? 'Free runs used up. Press to see plans.' : t.hint}</Text>
-              </Box>
-            ) : (
-              <Box key={`tool-${t.key}`} flexDirection="row" alignItems="center" columnGap={1}>
-                {desktop && Svg ? <Svg source={dot(MUTED)} alt="Not connected" width={10} height={10} /> : <Text color={MUTED}>●</Text>}
-                <Text dimColor>{t.label} · not connected</Text>
-              </Box>
-            )
+            return live
+              ? row(`tool-${t.key}`, t.label, t.hint, <Button key={`tool-btn-${t.key}`} label="Use" onPress={() => creditTool($, () => handOver($, live.prompt, 'prepend'))} />)
+              : row(`tool-${t.key}`, t.label, 'Not connected in this session.', desktop && Svg ? <Svg source={dot(MUTED)} alt="Not connected" width={10} height={10} /> : <Text color={MUTED}>●</Text>)
           }),
           out ? (
-            <Box key="tool-upgrade" flexDirection="row" alignItems="center" columnGap={1}>
-              <Text dimColor>Free runs used up</Text>
+            <Box key="tool-upgrade" flexDirection="row">
               <Button key="upgrade-tools" label="Upgrade" variant="primary" onPress={() => upgrade($)} />
             </Box>
           ) : (
             ''
           ),
         ])}
-        {section('d-custom', 'Customize', [
-          ...customizeGroups(v).map(g => (
-            <Box key={`grp-${g.title}`} flexDirection="column">
-              <Text dimColor>{g.title}</Text>
-              <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-                {g.items.map(item => (
-                  <Button key={`show-${item.key}`} plain label={`${v.off.includes(item.key) ? '☐' : '☑'} ${item.label}`} onPress={() => toggleItem($, item.key)} />
-                ))}
-                {g.upgrade ? <Button key={`up-${g.title}`} plain label="See plans ›" onPress={() => upgrade($)} /> : ''}
-              </Box>
+        {section('d-custom', 'Show in the bar', '', [
+          ...customizeGroups(v).flatMap(g =>
+            g.items.map(item => row(`show-row-${item.key}`, item.label, '', toggle(`show-${item.key}`, !v.off.includes(item.key), () => toggleItem($, item.key)))),
+          ),
+          customizeGroups(v).some(g => g.upgrade) ? (
+            <Box key="custom-upgrade" flexDirection="row">
+              <Button key="up-custom" plain label="See plans" onPress={() => upgrade($)} />
             </Box>
-          )),
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-            <Button key="dashboard" plain label="Open dashboard ›" onPress={() => openDashboard($)} />
+          ) : (
+            ''
+          ),
+          <Box key="custom-footer" flexDirection="row" flexWrap="wrap" columnGap={2}>
+            <Button key="dashboard" plain label="Open dashboard" onPress={() => openDashboard($)} />
             <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai bar'} onPress={() => turnOffMod($)} />
           </Box>,
         ])}
         {v.dev
-          ? section('d-debug', 'Debug (dev build only)', [
-              ...debugLines(v).map(l => <Text dimColor wrap="wrap">{l}</Text>),
-              <Text dimColor>Preview the bar as (drawing only, buttons act on your real account):</Text>,
-              <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
+          ? section('d-debug', 'Debug', 'dev build only', [
+              // Same rows as every section: the name bold on the left, the value dim beside it.
+              ...debugLines(v).map(([name, value]) => (
+                <Text key={`dbg-${name}`} wrap="wrap">
+                  <Text bold>{name}</Text>
+                  <Text dimColor> {value}</Text>
+                </Text>
+              )),
+              row(
+                'dbg-preview',
+                'Preview the bar as',
+                `${PREVIEWS.find(x => x.key === (v.preview ?? ''))?.label ?? v.preview}. Drawing only: buttons still act on your real account.`,
+                '',
+              ),
+              <Box key="dbg-previews" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
                 {PREVIEWS.map(pr => (
                   <Button
                     key={`pv-${pr.key || 'real'}`}
@@ -2094,20 +2110,71 @@ function details($: Dollar, D: Elements, v: View) {
             ])
           : ''}
       </Box>
-      {/* The bar scrolls when expanded: collapse sits at the bottom too, beside the prompt. */}
-      {/* Health, kept quiet: one dim line beside Collapse. Only a problem gets color. */}
-      <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={2}>
-        <Text dimColor wrap="truncate">
-          {healthFooter(v)}
-          {v.health && !v.health.isSignedIn ? <Text color={BAD}> · Not signed in, run the BuildPartner.ai install again</Text> : ''}
-        </Text>
-        <Button key="collapse-bottom" label="▴ Collapse" onPress={() => update($, isExpanded, () => false)} />
-      </Box>
+      {/* Health, kept quiet: one dim line. Only a problem gets color. ▴ in the bar is the one way to close. */}
+      <Text dimColor wrap="truncate">
+        {healthFooter(v)}
+        {v.health && !v.health.isSignedIn ? <Text color={BAD}> · Not signed in, run the BuildPartner.ai install again</Text> : ''}
+      </Text>
     </Box>
   )
 }
 
 /** The suggestions card drawn in the conversation: one block per suggestion, then the walk-through. */
+/**
+ * The suggestions above the bar, in the notification's look: one outlined row each, the icon,
+ * what changes (with why, dimmed), Apply as the main button and Dismiss beside it. The
+ * "N suggestions" button opens and closes them; nothing here starts a Claude reply.
+ */
+// The suggestion row's words, per kind: the label first ("Suggested rule") and the main button,
+// named by what pressing it does.
+// The no button mirrors it, so it reads as a no and says nothing changes ("Don't add").
+const ROW_KIND: Record<string, { label: string; action: string; decline: string }> = {
+  instruction: { label: 'Suggested rule', action: 'Add rule', decline: "Don't add" },
+  skill_fix: { label: 'Suggested skill update', action: 'Update skill', decline: "Don't update" },
+  new_skill: { label: 'Suggested new skill', action: 'Create skill', decline: "Don't create" },
+  wiki: { label: 'Suggested knowledge base update', action: 'Update knowledge base', decline: "Don't update" },
+  framework: { label: 'Suggested framework', action: 'Add framework', decline: "Don't add" },
+}
+
+/** The change without the "Add a rule:" lead-in the label already says. */
+function changeText(change: string): string {
+  const t = change.replace(/^(add|create|update)\s+(a|an|the)?\s*[\w -]{1,24}:\s*/i, '')
+  return t ? t[0].toUpperCase() + t.slice(1) : change
+}
+
+function suggestionRows($: Dollar, D: Elements, list: ReflectPattern[], pictures: boolean, at: number) {
+  const { Box, Text, Button } = D
+  const Svg = pictures ? svgOf(D) : null
+  // One at a time, like a notification: the one shown, then Next to the following one.
+  const i = list.length ? at % list.length : 0
+  const p = list[i]
+  if (!p) return ''
+  return (
+    <Box key={`row-${p.id}`} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
+      {Svg ? <Svg source={sparkle(LOGO_TINT)} alt="" width={16} height={16} /> : <Text color={LOGO_TINT}>✦</Text>}
+      {/* Where it came from and which file, then the change, then why: the full card's information in the notification's look. */}
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <Text wrap="wrap">
+          <Text bold color={LOGO_TINT}>
+            {(ROW_KIND[p.type] ?? { label: TYPE_LABEL[p.type] ?? p.type }).label}
+          </Text>
+          <Text dimColor> · {targetLabel(p.target)}</Text>
+          {list.length > 1 ? <Text dimColor>{` · ${i + 1} of ${list.length}`}</Text> : ''}
+        </Text>
+        <Text bold wrap="wrap">
+          {changeText(p.change)}
+        </Text>
+        <Text dimColor wrap="wrap">
+          {p.corrections ? 'From your correction' : `Came up in ${p.sessions.length} sessions`}: "{cut(p.evidence, 120)}"
+        </Text>
+      </Box>
+      <Button key={`card-apply-${p.id}`} label={(ROW_KIND[p.type] ?? { action: 'Apply' }).action} variant="primary" onPress={() => apply($, p.id)} />
+      <Button key={`card-dismiss-${p.id}`} plain label={ROW_KIND[p.type]?.decline ?? 'Dismiss'} onPress={() => dismiss($, p.id)} />
+      {list.length > 1 ? <Button key="card-next" plain label="Next" onPress={() => update($, listAt, n => n + 1)} /> : ''}
+    </Box>
+  )
+}
+
 function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], pictures: boolean) {
   const { Box, Text, Button } = D
   const Svg = pictures ? svgOf(D) : null
@@ -2233,15 +2300,16 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   )
 
   // The suggestion waiting takes the right of the row.
+  // Hidden while the settings are open: ▴ is then the one way out (one panel at a time).
   const middle =
-    top && v.enabled ? (
-      <Box flexDirection="row" alignItems="center" columnGap={1} flexShrink={0}>
-        <Svg source={sparkle(CLAY)} alt="Suggestion" width={16} height={16} />
-        <Text>
-          <Text bold>{v.list.length}</Text> {v.list.length === 1 ? 'suggestion' : 'suggestions'}
-        </Text>
-        <Button key="review-suggestions" label="Review" variant="primary" onPress={async () => (await update($, isExpanded, () => false), await showSuggestions($))} />
-      </Box>
+    top && v.enabled && !v.open ? (
+      // One control: the count is the button that opens them.
+      <Button
+        key="review-suggestions"
+        plain
+        label={v.listOpen ? 'Hide suggestions' : `${v.list.length} ${v.list.length === 1 ? 'suggestion' : 'suggestions'}`}
+        onPress={() => toggleList($)}
+      />
     ) : (
       ''
     )
@@ -2277,25 +2345,31 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
 
   return (
     <Box key="bp-band" flexDirection="column" paddingX={1} rowGap={1}>
+      {v.listOpen && v.list.length > 0 ? suggestionRows($, D, v.list, true, v.listAt) : ''}
       {topCardDesktop($, D, v, Svg)}
       {nudge}
       <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2} rowGap={1}>
         <Box flexDirection="row" alignItems="center" columnGap="xs" flexShrink={0}>
           <Svg source={LOGO} alt="BuildPartner.ai" width={20} height={20} />
           <Text bold>{NAME}</Text>
-          {v.dev ? <Text color={CAUTION}>DEV</Text> : ''}
+          {v.tag ? <Text color={CAUTION}>{v.tag}</Text> : ''}
         </Box>
         {v.off.includes('self') ? '' : self}
         {v.off.includes('expert') ? '' : expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
           {out ? <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} /> : ''}
           {middle}
-          <Button key="expand" plain onPress={toggle}>
-            <Text bold>{v.open ? '▴' : '▾'}</Text>
-          </Button>
+          {/* While suggestions are open, "Hide suggestions" is the only way out: no ▾. */}
+          {v.listOpen && v.list.length > 0 ? (
+            ''
+          ) : (
+            <Button key="expand" plain onPress={toggle}>
+              <Text bold>{v.open ? '▴' : '▾'}</Text>
+            </Button>
+          )}
         </Box>
       </Box>
-      {v.open ? details($, D, v) : ''}
+      {v.open && !(v.listOpen && v.list.length > 0) ? details($, D, v) : ''}
     </Box>
   )
 }
@@ -2314,9 +2388,10 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   // The "checked 3m ago" time lives in the expanded view: here it only pushed the line past 80 columns.
   return (
     <Box flexDirection="column">
+      {v.listOpen && v.list.length > 0 ? suggestionRows($, D, v.list, false, v.listAt) : ''}
       {topCardPlain($, D, v)}
       <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-        <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={toggle} />
+        {v.listOpen && v.list.length > 0 ? '' : <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={toggle} />}
         <Text>
           <Text bold>{NAME}</Text>
           <Text dimColor> · {short ? 'Self-Improving' : 'Self-Improving System'}: </Text>
@@ -2328,14 +2403,16 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         <Button key="ask-expert-bar" plain onPress={() => askExpert($)}>
           <Text dimColor>{short ? 'Expert' : 'Expert Advice'}:</Text> <Text bold color={ex.color}>{ex.word}</Text>
         </Button>
-        {v.dev ? <Text color={CAUTION}>DEV</Text> : ''}
+        {v.tag ? <Text color={CAUTION}>{v.tag}</Text> : ''}
       </Box>
       {top && v.enabled && !v.open ? (
         <Box flexDirection="row" gap={1}>
-          <Text>
-            <Text bold>{v.list.length}</Text> {v.list.length === 1 ? 'suggestion' : 'suggestions'} ready
-          </Text>
-          <Button key="review-suggestions" label="Review" variant="primary" onPress={async () => (await update($, isExpanded, () => false), await showSuggestions($))} />
+          <Button
+            key="review-suggestions"
+            label={v.listOpen ? 'Hide suggestions' : `${v.list.length} ${v.list.length === 1 ? 'suggestion' : 'suggestions'}`}
+            variant="primary"
+            onPress={() => toggleList($)}
+          />
         </Box>
       ) : v.ex && v.enabled && v.expertOn && !v.open ? (
         <Box flexDirection="row" gap={1}>
@@ -2357,7 +2434,7 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
       ) : (
         ''
       )}
-      {v.open ? details($, D, v) : ''}
+      {v.open && !(v.listOpen && v.list.length > 0) ? details($, D, v) : ''}
     </Box>
   )
 }
