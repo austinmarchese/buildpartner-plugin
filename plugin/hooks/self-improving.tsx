@@ -1017,6 +1017,8 @@ const NAME = 'BuildPartner.ai'
 
 // BuildPartner.ai's own palette: clay on cream.
 const CLAY = '#a64422'
+/** The logo's lighter copper (the web's --accent-soft): the bar's two icons. */
+const LOGO_TINT = '#cc775a'
 const CREAM = '#fbf8f2'
 const GOOD = '#2f9e55'
 const CAUTION = '#c98a1b'
@@ -2069,7 +2071,7 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const self = (
     <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
       {/* Same shape as Expert Advice: the icon tight to "Name: On", the On/Off in its status color. A Button's padding pushed the icon away, so the name is plain text. */}
-      <Svg source={sparkle(CLAY)} alt={`Self-Improving System ${state.word}`} width={18} height={18} />
+      <Svg source={sparkle(LOGO_TINT)} alt={`Self-Improving System ${state.word}`} width={18} height={18} />
       <Text>
         {' '}Self-Improving System: <Text bold color={state.color}>{state.word}</Text>
       </Text>
@@ -2095,7 +2097,7 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const expertItem = (
     <Box key="tool-expert" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
       <Text>
-        <Text color={CLAY}>✦</Text> Expert Advice: <Text bold color={ex.color}>{ex.word}</Text>
+        <Text color={LOGO_TINT}>✦</Text> Expert Advice: <Text bold color={ex.color}>{ex.word}</Text>
       </Text>
       {card('Expert Advice', [
         v.ex ? `Flagged: ${v.ex.question}` : 'Flags decisions in this conversation worth asking an expert about.',
