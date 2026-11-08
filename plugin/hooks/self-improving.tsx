@@ -204,7 +204,9 @@ async function ledger($: Dollar): Promise<Record<string, ReflectPattern>> {
 }
 
 async function saveLedger($: Dollar, map: Record<string, ReflectPattern>): Promise<void> {
+  const before = await attempt(() => ledger($), {} as Record<string, ReflectPattern>)
   await $.store.set('patterns', map)
+  reportDecisions($, before, map)
   const all = Object.values(map)
   await update($, pending, () => all.filter(p => p.status === 'suggested').sort((a, b) => b.lastSeen - a.lastSeen))
   await update($, watching, () =>
@@ -948,15 +950,40 @@ async function refreshNotices($: Dollar): Promise<void> {
   await update($, notices, () => list)
 }
 
+const DECISION_EVENT: Partial<Record<ReflectPattern['status'], 'suggestion_shown' | 'suggestion_applied' | 'suggestion_dismissed'>> = {
+  suggested: 'suggestion_shown',
+  applied: 'suggestion_applied',
+  dismissed: 'suggestion_dismissed',
+}
+
+/**
+ * Each suggestion that just became suggested, applied or dismissed, for the numbers on
+ * Admin > Mod. Only the event and the suggestion's type (instruction, skill_fix...):
+ * never its id, target, change or the member's words. Demo suggestions are not counted.
+ */
+function reportDecisions($: Dollar, before: Record<string, ReflectPattern>, after: Record<string, ReflectPattern>): void {
+  for (const p of Object.values(after)) {
+    const kind = DECISION_EVENT[p.status]
+    if (!kind || p.id.startsWith('demo-') || before[p.id]?.status === p.status) continue
+    $.clock.after(0, () => void attempt(() => reportEvent($, kind, undefined, p.type), undefined))
+  }
+}
+
 // Notices reported as seen by this process; the server keeps one row per member per notice anyway.
 const seenReported = new Set<string>()
 
 /**
  * Tells BuildPartner.ai what the member did with the bar, for the numbers on
- * Admin > Mod: a notice seen, clicked or dismissed, or the bar hidden or shown.
- * Only the kind and the notice id: never conversation or file content. Fire and forget.
+ * Admin > Mod: a notice seen, clicked or dismissed, the bar hidden or shown, or a
+ * suggestion made, applied or dismissed. Only the kind, the notice id and the suggestion
+ * type: never conversation or file content. Fire and forget.
  */
-async function reportEvent($: Dollar, kind: 'notice_seen' | 'notice_clicked' | 'notice_dismissed' | 'bar_hidden' | 'bar_shown', noticeId?: string): Promise<void> {
+async function reportEvent(
+  $: Dollar,
+  kind: 'notice_seen' | 'notice_clicked' | 'notice_dismissed' | 'bar_hidden' | 'bar_shown' | 'suggestion_shown' | 'suggestion_applied' | 'suggestion_dismissed',
+  noticeId?: string,
+  suggestionType?: string,
+): Promise<void> {
   // Preview notices (dev builds) are drawings, not sends.
   if (noticeId?.startsWith('preview-')) return
   const a = await auth($)
@@ -966,7 +993,7 @@ async function reportEvent($: Dollar, kind: 'notice_seen' | 'notice_clicked' | '
       $.http.fetch(`${a.apiBase}/api/buildpartner/mod/events`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(noticeId ? { kind, notice_id: noticeId } : { kind }),
+        body: JSON.stringify(noticeId ? { kind, notice_id: noticeId } : suggestionType ? { kind, suggestion_type: suggestionType } : { kind }),
       }),
     null,
   )
