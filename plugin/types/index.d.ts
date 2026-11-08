@@ -1,4 +1,4 @@
-// State contract for the BuildPartner.ai Assistant mod (hooks/assistant.tsx).
+// State contract for the BuildPartner.ai Self-Improving System bar (hooks/self-improving.tsx).
 // Ported from Austin's internal-os mod, without the vendored Token Optimizer
 // figures (its license forbids shipping them to members).
 //
@@ -29,12 +29,12 @@ export type ReflectPattern = {
   status: ReflectPatternStatus
 }
 
-export type AssistantCursor = {
+export type ReviewCursor = {
   sessionId: string
   upTo: number
 }
 
-export type AssistantExpert = {
+export type ExpertFlag = {
   category: string
   question: string
   /** 2 to 5 words naming the decision, shown in the bar. Older entries lack it. */
@@ -55,11 +55,9 @@ export type ReflectRun = {
 }
 
 /** When the member's system last changed: shown in the Health card. */
-export type AssistantHealth = {
+export type BarHealth = {
   /** This plugin's version, from its own plugin.json. */
   version: string | null
-  /** Newest published version on this plugin's channel; null when unknown. */
-  latest: string | null
   /** When Claude Code last installed or updated this plugin (ISO). */
   pluginUpdatedAt: string | null
   /** Newest SKILL.md change in this project's .claude/skills (epoch ms). */
@@ -72,12 +70,14 @@ export type AssistantHealth = {
   apiBase: string | null
   /** Whether ~/.buildpartner/auth.json holds a token. */
   isSignedIn: boolean
+  /** Who this machine is signed in as (auth.json email, else username). Dev debug only. */
+  account?: string | null
   /** When these were gathered (epoch ms). */
   at: number
 }
 
 /** The member's plan, read from BuildPartner.ai (GET /api/buildpartner/plan). */
-export type AssistantPlan = {
+export type MemberPlan = {
   /** Free, Pro, Collaboration or Executive. */
   name: string
   paid: boolean
@@ -89,6 +89,18 @@ export type AssistantPlan = {
   at: number
 }
 
+/** A notification the BuildPartner.ai team sent to the bar (Admin > Mod, GET /api/buildpartner/mod/notices). */
+export type TeamNotice = {
+  id: string
+  /** 'video' is a new video from Austin: a play mark, and the button opens it. */
+  kind: 'message' | 'video'
+  message: string
+  /** The button's label; '' for no button. */
+  linkLabel: string
+  /** http(s) only; '' for no button. */
+  linkHref: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'bp-dev': {
@@ -98,20 +110,22 @@ declare module 'claude-code' {
       busySince: number
       isHidden: boolean
       turns: number
-      cursor: Shaped<AssistantCursor | null>
+      cursor: Shaped<ReviewCursor | null>
       lastReviewAt: number
       last: Shaped<ReflectRun | null>
       isExpanded: boolean
       tick: number
       bpTools: Shaped<string[]>
       hiddenItems: Shaped<string[]>
-      expert: Shaped<AssistantExpert | null>
-      health: Shaped<AssistantHealth | null>
+      expert: Shaped<ExpertFlag | null>
+      health: Shaped<BarHealth | null>
       scanned: boolean
-      plan: Shaped<AssistantPlan | null>
+      plan: Shaped<MemberPlan | null>
       previewAs: string
       isScanning: boolean
       appliedNow: Shaped<string[]>
+      notices: Shaped<TeamNotice[]>
+      isWelcomed: boolean
     }
   }
 }

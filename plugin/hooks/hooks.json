@@ -1,1 +1,1 @@
-{ "modules": ["./assistant.tsx"] }
+{ "modules": ["./self-improving.tsx"] }

@@ -1,4 +1,4 @@
-// BuildPartner.ai Assistant: the plugin's mod, a slim band above the prompt.
+// BuildPartner.ai Self-Improving System: the plugin's bar, a slim band above the prompt.
 //
 // Ported from Austin's internal-os mod (.claude/skills/buildpartner-assistant),
 // with three changes:
@@ -16,14 +16,14 @@
 // the last review and names system lessons. Each lesson is a pattern in a
 // ledger kept across sessions. A pattern becomes a suggestion only once it has
 // shown up in 3 sessions, or once the member explicitly corrected Claude about
-// it. The assistant itself never edits a file and never sends a prompt.
+// it. The coach itself never edits a file and never sends a prompt.
 //
 // The literal 'buildpartner' in every state ref is this plugin's name.
 // deploy-dev-plugin.sh rewrites it to 'bp-dev' for the dev plugin.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { AssistantCursor, AssistantExpert, AssistantHealth, AssistantPlan, ReflectPattern, ReflectPatternType, ReflectRun } from '../types'
+import type { ReviewCursor, ExpertFlag, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun } from '../types'
 
 type Dollar = EngineInterface
 
@@ -33,7 +33,7 @@ const MIN_GAP_MS = 60_000
 const SLICE_MESSAGES = 200
 const SLICE_CHARS = 14_000
 const BUSY_STALE_MS = 120_000
-// Automatic reviews a day, across sessions. /assistant now and review_now are not capped.
+// Automatic reviews a day, across sessions. /bp-dev:plugin now and review_now are not capped.
 const DAILY_CAP = 40
 // Quick "is this a correction?" checks a day, for prompts the English phrases miss.
 const CHECK_CAP = 150
@@ -48,10 +48,10 @@ const isEnabled = atom({ plugin: 'bp-dev', key: 'isEnabled' } as const, true)
 const busySince = atom({ plugin: 'bp-dev', key: 'busySince' } as const, 0)
 const turns = atom({ plugin: 'bp-dev', key: 'turns' } as const, 0)
 // How far into which session the last review read. A /clear, a compaction or another session resets it.
-const cursor = atom({ plugin: 'bp-dev', key: 'cursor' } as const, null as AssistantCursor | null, { shape: 'c-1' })
+const cursor = atom({ plugin: 'bp-dev', key: 'cursor' } as const, null as ReviewCursor | null, { shape: 'c-1' })
 const lastReviewAt = atom({ plugin: 'bp-dev', key: 'lastReviewAt' } as const, 0)
 const last = atom({ plugin: 'bp-dev', key: 'last' } as const, null as ReflectRun | null, { shape: 'r-1' })
-const expert = atom({ plugin: 'bp-dev', key: 'expert' } as const, null as AssistantExpert | null, { shape: 'e-1' })
+const expert = atom({ plugin: 'bp-dev', key: 'expert' } as const, null as ExpertFlag | null, { shape: 'e-1' })
 // Bumped on the minute so "ago" figures redraw.
 const tick = atom({ plugin: 'bp-dev', key: 'tick' } as const, 0)
 // The BuildPartner.ai tools connected in this session, as `key:plugin` (see BP_TOOLS).
@@ -67,10 +67,14 @@ const scanned = atom({ plugin: 'bp-dev', key: 'scanned' } as const, false)
 const isScanning = atom({ plugin: 'bp-dev', key: 'isScanning' } as const, false)
 const appliedNow = atom({ plugin: 'bp-dev', key: 'appliedNow' } as const, [] as string[], { shape: 'an-1' })
 // The member's plan, from BuildPartner.ai: null until read, or when it can't be.
-const plan = atom({ plugin: 'bp-dev', key: 'plan' } as const, null as AssistantPlan | null, { shape: 'pl-1' })
+const plan = atom({ plugin: 'bp-dev', key: 'plan' } as const, null as MemberPlan | null, { shape: 'pl-1' })
 // Dev builds only: which made-up state the bar draws, '' for the real one.
 const previewAs = atom({ plugin: 'bp-dev', key: 'previewAs' } as const, '')
-const health = atom({ plugin: 'bp-dev', key: 'health' } as const, null as AssistantHealth | null, { shape: 'h-1' })
+const health = atom({ plugin: 'bp-dev', key: 'health' } as const, null as BarHealth | null, { shape: 'h-1' })
+// Notifications from the BuildPartner.ai team the member has not dismissed, newest first.
+const notices = atom({ plugin: 'bp-dev', key: 'notices' } as const, [] as TeamNotice[], { shape: 'nt-1' })
+// The first-run welcome card was seen. True until the store says otherwise, so it never flashes.
+const isWelcomed = atom({ plugin: 'bp-dev', key: 'isWelcomed' } as const, true)
 
 type Settings = typeof DEFAULTS
 
@@ -106,16 +110,17 @@ async function home($: Dollar): Promise<string | null> {
   return (await attempt(() => $.env.get('HOME'), undefined)) ?? (await attempt(() => $.env.get('USERPROFILE'), undefined)) ?? null
 }
 
-async function auth($: Dollar): Promise<{ token: string | null; apiBase: string }> {
+async function auth($: Dollar): Promise<{ token: string | null; apiBase: string; account: string | null }> {
   const h = await home($)
   const raw = h ? await attempt(() => $.fs.read(`${h}/.buildpartner/auth.json`), '') : ''
   try {
-    const j = JSON.parse(typeof raw === 'string' ? raw : '') as { token?: unknown; api_base?: unknown }
+    const j = JSON.parse(typeof raw === 'string' ? raw : '') as { token?: unknown; api_base?: unknown; email?: unknown; username?: unknown }
     const token = typeof j.token === 'string' && j.token ? j.token : null
     const apiBase = typeof j.api_base === 'string' && /^https?:\/\//.test(j.api_base) ? j.api_base.replace(/\/$/, '') : DEFAULT_API
-    return { token, apiBase }
+    const account = typeof j.email === 'string' && j.email ? j.email : typeof j.username === 'string' && j.username ? j.username : null
+    return { token, apiBase, account }
   } catch {
-    return { token: null, apiBase: DEFAULT_API }
+    return { token: null, apiBase: DEFAULT_API, account: null }
   }
 }
 
@@ -123,7 +128,7 @@ async function auth($: Dollar): Promise<{ token: string | null; apiBase: string 
 
 // The criteria are improve-system's own (Mode 5: suggestion types, never a
 // plugin's skill) and the shared rule that a single instance is not a learning.
-const SYSTEM = `You are the self-improving reviewer of the BuildPartner.ai Assistant, a quiet reviewer inside a BuildPartner.ai member's Claude Code project. You read a slice of a live Claude Code conversation and name lessons for the member's SYSTEM (their skills, CLAUDE.md, rules, wiki), never for the task at hand. You apply the criteria of /bp-dev:improve-system.
+const SYSTEM = `You are the reviewer behind BuildPartner.ai's Self-Improving System, a quiet reviewer inside a BuildPartner.ai member's Claude Code project. You read a slice of a live Claude Code conversation and name lessons for the member's SYSTEM (their skills, CLAUDE.md, rules, wiki), never for the task at hand. You apply the criteria of /bp-dev:improve-system.
 
 Look for:
 - Corrections: the member pushes back on what Claude did ("no, not like that", "I told you", "don't ..."), revealing a missing rule or step.
@@ -155,7 +160,7 @@ Rules:
 - is_explicit_correction is true only when the member pushed back on something Claude did in this slice.
 - If an item is the same lesson as one in KNOWN PATTERNS, reuse its id exactly. Otherwise mint a short kebab-case id naming the lesson (not the task).
 - Report a lesson the first time you see it. You do NOT apply the "recurs 3+ times" bar: a ledger counts sightings across sessions and only shows the member a lesson once it recurs. A lesson the member had to state twice in one slice is a strong sighting.
-- Skip one-off task details, the content being written, and anything about this assistant itself. A lesson is something a skill or file should do differently EVERY time.
+- Skip one-off task details, the content being written, and anything about this coach itself. A lesson is something a skill or file should do differently EVERY time.
 - If nothing qualifies, return {"items":[]}. At most 3 items, strongest first.
 
 Separately, EXPERT: if the member's latest messages weigh a decision where an expert framework would change the answer (pricing, an offer, a launch, positioning, a sales page, a hire, what to cut), and no expert was already asked in the slice, name it. Categories: sales, marketing, content, product, business-strategy, ai-automation, persuasion, copywriting, mindset. The question is one sentence in the member's terms that an expert could answer cold. topic names the decision in 2 to 5 plain words (e.g. "Starter tier pricing"). Otherwise expert is null. Code questions, file edits and mechanics never qualify.
@@ -489,7 +494,7 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
 }
 
 // The first Apply starts this prompt; each later Apply, while it is still unsent, adds a line to it.
-const HANDOFF_HEAD = '/bp-dev:improve-system Apply these BuildPartner.ai Assistant suggestions, and show me each edit before you write it:'
+const HANDOFF_HEAD = '/bp-dev:improve-system Apply these Self-Improving System suggestions, and show me each edit before you write it:'
 
 function handoffLine(p: ReflectPattern): string {
   const seen = `seen in ${p.sessions.length} session${p.sessions.length === 1 ? '' : 's'}${p.corrections ? `, ${p.corrections} correction${p.corrections === 1 ? '' : 's'}` : ''}`
@@ -547,14 +552,14 @@ function suggestionsMarkdown(list: ReflectPattern[]): string {
       `## ${i + 1}. ${TYPE_LABEL[p.type] ?? p.type}: ${p.target}\n\n` +
       `- **id:** \`${p.id}\`\n- **Change:** ${p.change}\n- **Why:** ${why(p)}\n- **You said:** "${p.evidence}"\n`,
   )
-  return `# BuildPartner.ai Assistant: pending suggestions\n\n${items.join('\n') || 'None pending.'}\n`
+  return `# BuildPartner.ai Self-Improving System: pending suggestions\n\n${items.join('\n') || 'None pending.'}\n`
 }
 
 /** Writes the pending suggestions to a file under ~/.claude, for the walk-through to attach. */
 async function writeSuggestionsFile($: Dollar, list: ReflectPattern[]): Promise<string | null> {
   const h = await home($)
   if (!h) return null
-  const dir = `${h}/.claude/buildpartner-assistant`
+  const dir = `${h}/.claude/buildpartner-self-improving`
   const path = `${dir}/suggestions.md`
   await attempt(() => $.process.run(['mkdir', '-p', dir], { timeoutMs: 5_000 }), null)
   const ok = await attempt(async () => (await $.fs.write(path, suggestionsMarkdown(list)), true), false)
@@ -569,14 +574,14 @@ async function walkThrough($: Dollar): Promise<void> {
   const attach = file ? `@${file} ` : ''
   await handOver(
     $,
-    `${attach}Go through my BuildPartner.ai Assistant suggestions one at a time. For each, ask me with AskUserQuestion: Apply, Not now, or Dismiss. ` +
+    `${attach}Go through my Self-Improving System suggestions one at a time. For each, ask me with AskUserQuestion: Apply, Not now, or Dismiss. ` +
       `On Apply, make the change through /bp-dev:improve-system (show me the edit first). Record every decision with the resolve_suggestion tool.`,
   )
 }
 
-/** Shows the pending suggestions as a card in the conversation (the /assistant suggestions row). */
+/** Shows the pending suggestions as a card in the conversation (the /bp-dev:plugin suggestions row). */
 async function showSuggestions($: Dollar): Promise<void> {
-  await attempt(() => $.command.run({ command: 'assistant', args: 'suggestions' }), null)
+  await attempt(() => $.command.run({ command: 'plugin', args: 'suggestions' }), null)
 }
 
 const DEMO: ReflectPattern = {
@@ -718,12 +723,10 @@ const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: strin
   { key: 'founder', tool: 'get_founder_knowledge', label: 'Founder Knowledge', hint: "Answers from your company's own knowledge.", prompt: '/{p}-team:ask-founder ' },
 ]
 
-/** Everything the bar can show, for the Show in the bar toggles. */
+/** What the one-line bar shows, for the Show in the bar toggles. The tools sit under Additional tools in the expanded view. */
 const BAR_ITEMS: readonly { key: string; label: string }[] = [
-  { key: 'self', label: 'AI Coach' },
-  { key: 'expert', label: 'Ask the Expert' },
-  { key: 'coach', label: 'Message Coach' },
-  ...BP_TOOLS.map(t => ({ key: t.key, label: t.label })),
+  { key: 'self', label: 'Self-Improving System' },
+  { key: 'expert', label: 'Expert Advice' },
 ]
 
 async function toggleItem($: Dollar, key: string): Promise<void> {
@@ -807,25 +810,18 @@ async function refreshHealth($: Dollar): Promise<void> {
     if (m && (skillsUpdatedAt === null || m > skillsUpdatedAt)) skillsUpdatedAt = m
   }
 
-  // The newest release on this plugin's channel: npm buildpartner @latest, or @dev for dev builds.
-  const tag = isDevBuild($) ? 'dev' : 'latest'
-  const latest = await attempt(async () => {
-    const r = await $.http.fetch(`https://registry.npmjs.org/buildpartner/${tag}`)
-    return r.ok ? ((JSON.parse(r.text) as { version?: string }).version ?? null) : null
-  }, null)
-
   const a = await auth($)
   const cc = await attempt(async () => (await $.session.version()).version, null as string | null)
 
   await update($, health, () => ({
     version,
-    latest,
     pluginUpdatedAt,
     skillsUpdatedAt,
     skillCount: skills.length,
     ccVersion: cc,
     apiBase: a.apiBase,
     isSignedIn: a.token !== null,
+    account: a.account,
     at: now,
   }))
 }
@@ -848,11 +844,95 @@ async function refreshPlan($: Dollar): Promise<void> {
   }))
 }
 
+// ---- Notifications from the team (Admin > Mod) ----
+
+// Dismissed ids kept on this machine so Dismiss is instant; the server also drops
+// a dismissed notice from GET notices (its notice_dismissed event), for a second machine.
+const DISMISSED_KEEP = 200
+
+async function dismissedNotices($: Dollar): Promise<string[]> {
+  const v = await attempt(() => $.store.get('dismissedNotices'), undefined)
+  return Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === 'string') : []
+}
+
+/** Reads the team's notices. Fails soft: a failed read keeps what the bar shows. */
+async function refreshNotices($: Dollar): Promise<void> {
+  const a = await auth($)
+  if (!a.token) return
+  const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/mod/notices`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
+  if (!r?.ok) return
+  const j = await attempt(async () => JSON.parse(r.text) as { notices?: unknown }, null)
+  if (!j || !Array.isArray(j.notices)) return
+  const gone = new Set(await dismissedNotices($))
+  const list: TeamNotice[] = []
+  for (const raw of j.notices as Record<string, unknown>[]) {
+    const id = typeof raw?.id === 'string' ? raw.id : ''
+    const message = typeof raw?.message === 'string' ? raw.message.trim() : ''
+    if (!id || !message || gone.has(id)) continue
+    const href = typeof raw.link_href === 'string' && /^https?:\/\//.test(raw.link_href) ? raw.link_href : ''
+    const label = href && typeof raw.link_label === 'string' ? raw.link_label.trim() : ''
+    list.push({ id, kind: raw.kind === 'video' ? 'video' : 'message', message, linkLabel: label, linkHref: label ? href : '' })
+  }
+  await update($, notices, () => list)
+}
+
+// Notices reported as seen by this process; the server keeps one row per member per notice anyway.
+const seenReported = new Set<string>()
+
+/**
+ * Tells BuildPartner.ai what the member did with the bar, for the numbers on
+ * Admin > Mod: a notice seen, clicked or dismissed, or the bar hidden or shown.
+ * Only the kind and the notice id: never conversation or file content. Fire and forget.
+ */
+async function reportEvent($: Dollar, kind: 'notice_seen' | 'notice_clicked' | 'notice_dismissed' | 'bar_hidden' | 'bar_shown', noticeId?: string): Promise<void> {
+  // Preview notices (dev builds) are drawings, not sends.
+  if (noticeId?.startsWith('preview-')) return
+  const a = await auth($)
+  if (!a.token) return
+  await attempt(
+    () =>
+      $.http.fetch(`${a.apiBase}/api/buildpartner/mod/events`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(noticeId ? { kind, notice_id: noticeId } : { kind }),
+      }),
+    null,
+  )
+}
+
+function noteSeen($: Dollar, n: TeamNotice | null): void {
+  if (!n || seenReported.has(n.id)) return
+  seenReported.add(n.id)
+  $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_seen', n.id), undefined))
+}
+
+async function dismissNotice($: Dollar, id: string): Promise<void> {
+  $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_dismissed', id), undefined))
+  const kept = (await dismissedNotices($)).filter(x => x !== id)
+  await attempt(() => $.store.set('dismissedNotices', [id, ...kept].slice(0, DISMISSED_KEEP)), undefined)
+  await update($, notices, list => list.filter(n => n.id !== id))
+}
+
+/** The notice's button: opens its link, and the notice stays until dismissed. */
+async function openNotice($: Dollar, n: TeamNotice): Promise<void> {
+  if (!n.linkHref) return
+  $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_clicked', n.id), undefined))
+  if (!(await openUrl($, n.linkHref))) $.ui.toast(`${NAME}: could not open a browser. The link is ${n.linkHref}`)
+}
+
+// ---- First run ----
+
+async function finishWelcome($: Dollar, showSettings: boolean): Promise<void> {
+  await attempt(() => $.store.set('welcomed', true), undefined)
+  await update($, isWelcomed, () => true)
+  if (showSettings) await update($, isExpanded, () => true)
+}
+
 // The bar items that spend BuildPartner.ai credits on the free plan.
 const CREDIT_ITEMS = ['expert', 'pad', 'social', 'web']
 
 /** Free plan with no credits left: credit tools lead to the upgrade page instead of a prompt that would fail. */
-function isOutOfRuns(pl: AssistantPlan | null): boolean {
+function isOutOfRuns(pl: MemberPlan | null): boolean {
   return !!pl && !pl.paid && pl.creditsLeft !== null && pl.creditsLeft <= 0
 }
 
@@ -874,11 +954,16 @@ async function openDashboard($: Dollar, path = '/dashboard'): Promise<void> {
   const a = await auth($)
   const sep = path.includes('?') ? '&' : '?'
   const url = a.token ? `${a.apiBase}${path}${sep}t=${a.token}` : `${a.apiBase}${path}`
+  if (!(await openUrl($, url))) $.ui.toast(`${NAME}: could not open a browser. Your dashboard is at ${a.apiBase}/dashboard`)
+}
+
+/** Opens a link in the member's browser (macOS, Linux, Windows). False when none would open it. */
+async function openUrl($: Dollar, url: string): Promise<boolean> {
   for (const argv of [['open', url], ['xdg-open', url], ['cmd', '/c', 'start', '', url]]) {
     const r = await attempt(() => $.process.run(argv, { timeoutMs: 10_000 }), null)
-    if (r && r.exitCode === 0) return
+    if (r && r.exitCode === 0) return true
   }
-  $.ui.toast(`${NAME}: could not open a browser. Your dashboard is at ${a.apiBase}/dashboard`)
+  return false
 }
 
 /**
@@ -954,14 +1039,15 @@ function dot(color: string): string {
   return svg(10, 10, 'Connected', `<circle cx="5" cy="5" r="4" fill="${color}"/>`)
 }
 
-/** Self-improving's mark: a four-point spark, green on, amber reviewing, grey off. */
-function sparkle(color: string): string {
+/** Self-improving's mark: a four-point spark, in the text's own ink unless a color is given. The On/Off word carries the state. */
+function sparkle(color?: string): string {
+  const fill = color ? `fill="${color}"` : 'class="kf" fill="#1a1614"'
   return svg(
     18,
     18,
     'Self-improving',
-    `<path d="M9 1.5c.5 3.6 1.9 5 5.5 5.5-3.6.5-5 1.9-5.5 5.5-.5-3.6-1.9-5-5.5-5.5 3.6-.5 5-1.9 5.5-5.5z" fill="${color}"/>` +
-      `<path d="M14.2 11.6c.2 1.4.8 2 2.2 2.2-1.4.2-2 .8-2.2 2.2-.2-1.4-.8-2-2.2-2.2 1.4-.2 2-.8 2.2-2.2z" fill="${color}" opacity="0.7"/>`,
+    `<path d="M9 1.5c.5 3.6 1.9 5 5.5 5.5-3.6.5-5 1.9-5.5 5.5-.5-3.6-1.9-5-5.5-5.5 3.6-.5 5-1.9 5.5-5.5z" ${fill}/>` +
+      `<path d="M14.2 11.6c.2 1.4.8 2 2.2 2.2-1.4.2-2 .8-2.2 2.2-.2-1.4-.8-2-2.2-2.2 1.4-.2 2-.8 2.2-2.2z" ${fill} opacity="0.7"/>`,
   )
 }
 
@@ -986,6 +1072,91 @@ const BULB = svg(
   `<path class="k" d="M8 1.8a4.4 4.4 0 0 0-2.6 8c.5.4.8 1 .8 1.6v.6h3.6v-.6c0-.6.3-1.2.8-1.6A4.4 4.4 0 0 0 8 1.8z" fill="none" stroke="${CAUTION}" stroke-width="1.4" stroke-linejoin="round"/><path class="k" d="M6.3 14h3.4" stroke="${CAUTION}" stroke-width="1.4" stroke-linecap="round"/>`,
 )
 
+const PLAY = svg(16, 16, 'New video', `<circle cx="8" cy="8" r="7" fill="${CLAY}"/><path d="M6.4 5v6l4.8-3z" fill="#ffffff"/>`)
+const BELL = svg(
+  16,
+  16,
+  'From the BuildPartner.ai team',
+  `<path d="M8 1.8a4 4 0 0 0-4 4v2.6L2.8 10.8h10.4L12 8.4V5.8a4 4 0 0 0-4-4z" fill="none" stroke="${CLAY}" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.4 13a1.7 1.7 0 0 0 3.2 0" fill="none" stroke="${CLAY}" stroke-width="1.4" stroke-linecap="round"/>`,
+)
+
+// The first-run card. Admin > Mod shows the same words (MOD_WELCOME in
+// apps/web/lib/mod-notices.ts, guarded by a test): change the two together.
+const WELCOME = {
+  title: `Welcome to ${NAME} in Claude Code`,
+  lines: [
+    'This bar stays above your prompt in every session.',
+    `Self-Improving System reads this conversation every ${DEFAULTS.every} turns and suggests skills to create or fix. Nothing changes until you press Apply.`,
+    'Expert Advice flags decisions worth asking an expert about. Press it to ask. More tools sit under ▾.',
+  ],
+}
+
+/** What sits right above the bar: the welcome card on first run, else the team's newest notice. Desktop. */
+function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Element | '' {
+  const { Box, Text, Button } = D
+  if (!v.welcomed) {
+    return (
+      <Box key="bp-welcome" flexDirection="column" borderStyle="round" borderColor={CLAY} paddingX={1} rowGap={1}>
+        <Box flexDirection="row" alignItems="center" columnGap={1}>
+          <Svg source={LOGO} alt="BuildPartner.ai" width={18} height={18} />
+          <Text bold>{WELCOME.title}</Text>
+        </Box>
+        {WELCOME.lines.map(l => (
+          <Text wrap="wrap">{l}</Text>
+        ))}
+        <Box flexDirection="row" columnGap={1}>
+          <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
+          <Button key="welcome-settings" plain label="Show settings" onPress={() => finishWelcome($, true)} />
+        </Box>
+      </Box>
+    )
+  }
+  const n = v.notice
+  if (!n) return ''
+  return (
+    <Box key={`bp-notice-${n.id}`} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={CLAY} paddingX={1}>
+      <Svg source={n.kind === 'video' ? PLAY : BELL} alt="" width={16} height={16} />
+      <Box flexGrow={1} flexShrink={1}>
+        <Text wrap="wrap">{n.message}</Text>
+      </Box>
+      {n.linkLabel ? <Button key={`notice-open-${n.id}`} label={n.linkLabel} variant="primary" onPress={() => openNotice($, n)} /> : ''}
+      <Button key={`notice-dismiss-${n.id}`} plain label="Dismiss" onPress={() => dismissNotice($, n.id)} />
+    </Box>
+  )
+}
+
+/** The same, in words, for the terminal. */
+function topCardPlain($: Dollar, D: Elements, v: View): JSX.Element | '' {
+  const { Box, Text, Button } = D
+  if (!v.welcomed) {
+    return (
+      <Box key="bp-welcome" flexDirection="column">
+        <Text bold>{WELCOME.title}</Text>
+        {WELCOME.lines.map(l => (
+          <Text dimColor wrap="wrap">
+            {l}
+          </Text>
+        ))}
+        <Box flexDirection="row" gap={1}>
+          <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
+          <Button key="welcome-settings" label="Show settings" onPress={() => finishWelcome($, true)} />
+        </Box>
+      </Box>
+    )
+  }
+  const n = v.notice
+  if (!n) return ''
+  const room = Math.max(10, v.room - (n.linkLabel ? n.linkLabel.length + 12 : 8))
+  return (
+    <Box key={`bp-notice-${n.id}`} flexDirection="row" gap={1}>
+      <Text color={CLAY}>{n.kind === 'video' ? '▶' : '●'}</Text>
+      <Text>{cut(n.message, room)}</Text>
+      {n.linkLabel ? <Button key={`notice-open-${n.id}`} label={n.linkLabel} variant="primary" onPress={() => openNotice($, n)} /> : ''}
+      <Button key={`notice-dismiss-${n.id}`} label="✕" onPress={() => dismissNotice($, n.id)} />
+    </Box>
+  )
+}
+
 type View = {
   enabled: boolean
   busy: boolean
@@ -994,8 +1165,8 @@ type View = {
   list: ReflectPattern[]
   watch: ReflectPattern[]
   run: ReflectRun | null
-  ex: AssistantExpert | null
-  /** Coach settings: the two halves of AI Coach. */
+  ex: ExpertFlag | null
+  /** The two halves of the bar, each with its own switch. */
   selfOn: boolean
   expertOn: boolean
   /** BuildPartner.ai tools connected now. */
@@ -1005,12 +1176,16 @@ type View = {
   /** Dev builds only: the preview state drawn, '' for the real one. */
   preview?: string
   /** The member's plan; null until read. */
-  plan: AssistantPlan | null
+  plan: MemberPlan | null
+  /** The newest notification from the team not dismissed yet. */
+  notice: TeamNotice | null
+  /** The first-run welcome card was seen. */
+  welcomed: boolean
   /** The first-run look at past sessions has run. */
   scanned: boolean
   /** Reading past sessions now. */
   scanning: boolean
-  health: AssistantHealth | null
+  health: BarHealth | null
   dev: boolean
   pluginName: string
   surface: string
@@ -1103,13 +1278,15 @@ export const register: Register = on => {
       await update($, scanned, () => wasScanned)
       await update($, appliedNow, () => [])
       await update($, busySince, () => 0)
+      const wasWelcomed = (await $.store.get('welcomed')) === true
+      await update($, isWelcomed, () => wasWelcomed)
       await saveLedger($, await ledger($))
     }, undefined)
     // Each registration stands alone: a refused command never costs the tool.
     await $.command
       .register({
-        name: 'assistant',
-        description: `${NAME}: expand or collapse the bar. Args: on, off, now, hide, show, dashboard, coach, scan, every <n>, model <sonnet|haiku>, reset-dismissed`,
+        name: 'plugin',
+        description: `${NAME}: expand or collapse the bar. Args: on, off, now, hide, show, dashboard, coach, scan, welcome, notices, every <n>, model <sonnet|haiku>, reset-dismissed`,
         immediate: true,
       })
       .catch(() => undefined)
@@ -1140,12 +1317,18 @@ export const register: Register = on => {
       }, undefined),
     )
     $.clock.after(0, () => void attempt(() => refreshPlan($), undefined))
+    // The team's notices: read at start, then every 12 hours in a session that stays open.
+    $.clock.after(0, () => void attempt(() => refreshNotices($), undefined))
     let minutes = 0
     $.clock.every(60_000, () => {
       if (!active) return
       void attempt(() => update($, tick, n => n + 1), 0)
       minutes += 1
-      if (minutes % 60 === 0) void attempt(() => refreshPlan($), undefined)
+      // A long-lived session catches up on the plan and the team's notices every 12 hours.
+      if (minutes % (12 * 60) === 0) {
+        void attempt(() => refreshPlan($), undefined)
+        void attempt(() => refreshNotices($), undefined)
+      }
     })
     return done
   })
@@ -1203,17 +1386,17 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('command.run', async ($, e, next) => {
-    if (!/(^|[:/])assistant$/.test(e.command)) return next(e)
+    if (!/(^|[:/])plugin$/.test(e.command)) return next(e)
     try {
-      return await assistantCommand($, e)
+      return await barCommand($, e)
     } catch {
       return { text: `${NAME}: that did not work. Try again in a moment.` }
     }
   }).catch(($, e, next) => next(e))
 
-  // /assistant suggestions: the row in the conversation, drawn as a card.
+  // /bp-dev:plugin suggestions: the row in the conversation, drawn as a card.
   on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
-    if (!/(^|[:/])assistant$/.test(e.props.command) || e.props.args.trim() !== 'suggestions') return next(e)
+    if (!/(^|[:/])plugin$/.test(e.props.command) || e.props.args.trim() !== 'suggestions') return next(e)
     try {
       const list = await read($, pending)
       const D = $.ui.resolve(e)
@@ -1252,6 +1435,8 @@ export const register: Register = on => {
           off: await attempt(() => read($, hiddenAtom), [] as string[]),
           scanned: await attempt(() => read($, scanned), true),
           plan: await attempt(() => read($, plan), null),
+          notice: (await attempt(() => read($, notices), [] as TeamNotice[]))[0] ?? null,
+          welcomed: await attempt(() => read($, isWelcomed), true),
           scanning: await attempt(() => read($, isScanning), false),
           health: await attempt(() => read($, health), null),
           dev: isDevBuild($),
@@ -1261,6 +1446,8 @@ export const register: Register = on => {
           room: Math.max(20, e.props.bodyColumns - 2),
           rows: e.props.maxRows,
         }
+        // The welcome card sits in the notice's place, so a notice is seen only once it is drawn.
+        if (v.welcomed) noteSeen($, v.notice)
         const pv = v.dev ? await attempt(() => read($, previewAs), '') : ''
         const shown = withPreview({ ...v, preview: pv }, pv)
         const toggle = async () => {
@@ -1312,14 +1499,14 @@ async function ownTool($: Dollar, e: { tool: string; input: unknown }): Promise<
   }
 }
 
-/** /assistant and its arguments. Bare or namespaced: two copies of the mod in one session namespace it. */
-async function assistantCommand($: Dollar, e: { args: string }): Promise<{ text: string }> {
+/** /bp-dev:plugin (bp-dev:plugin in dev) and its arguments. Bare or namespaced: two copies of the mod in one session namespace it. */
+async function barCommand($: Dollar, e: { args: string }): Promise<{ text: string }> {
   {
     const [verb, arg] = e.args.trim().split(/\s+/)
     if (verb === 'off') {
       stop?.abort()
       await saveSettings($, { enabled: false })
-      return { text: `${NAME}: Self-improving is off. /assistant on to turn it back on.` }
+      return { text: `${NAME}: Self-improving is off. /${$.plugin.name}:plugin on to turn it back on.` }
     }
     if (verb === 'on') {
       await saveSettings($, { enabled: true })
@@ -1328,7 +1515,8 @@ async function assistantCommand($: Dollar, e: { args: string }): Promise<{ text:
     if (verb === 'hide' || verb === 'show') {
       // show also resumes: Turn off the mod paused reviews along with hiding the bar.
       await saveSettings($, verb === 'hide' ? { hidden: true } : { hidden: false, enabled: true })
-      return { text: verb === 'hide' ? `${NAME}: band hidden. /assistant show brings it back.` : `${NAME}: back on.` }
+      $.clock.after(0, () => void attempt(() => reportEvent($, verb === 'hide' ? 'bar_hidden' : 'bar_shown'), undefined))
+      return { text: verb === 'hide' ? `${NAME}: band hidden. /${$.plugin.name}:plugin show brings it back.` : `${NAME}: back on.` }
     }
     if (verb === 'dashboard') {
       await openDashboard($)
@@ -1357,7 +1545,7 @@ async function assistantCommand($: Dollar, e: { args: string }): Promise<{ text:
     if (verb === 'suggestions') {
       const list = await attempt(() => read($, pending), [] as ReflectPattern[])
       // The row Claude reads; the card hook below draws it.
-      return { text: list.length ? suggestionsMarkdown(list) : 'No pending BuildPartner.ai Assistant suggestions.' }
+      return { text: list.length ? suggestionsMarkdown(list) : 'No pending Self-Improving System suggestions.' }
     }
     if (verb === 'demo') {
       const map = await ledger($)
@@ -1369,7 +1557,7 @@ async function assistantCommand($: Dollar, e: { args: string }): Promise<{ text:
       const now = await $.clock.now()
       map[DEMO.id] = { ...DEMO, firstSeen: now, lastSeen: now }
       await saveLedger($, map)
-      return { text: `${NAME}: a demo suggestion is in the bar. Press Review to see the card. /assistant demo clear removes it.` }
+      return { text: `${NAME}: a demo suggestion is in the bar. Press Review to see the card. /${$.plugin.name}:plugin demo clear removes it.` }
     }
     if (verb === 'preview') {
       // Dev builds only: draw the bar in a preview state (the same list as the Debug section).
@@ -1378,7 +1566,18 @@ async function assistantCommand($: Dollar, e: { args: string }): Promise<{ text:
       const pr = PREVIEWS.find(x => x.key === key)
       if (!pr) return { text: `${NAME}: previews are ${PREVIEWS.map(x => x.key || 'real').join(', ')}.` }
       await update($, previewAs, () => pr.key)
-      return { text: `${NAME}: previewing "${pr.label}". /assistant preview real goes back.` }
+      return { text: `${NAME}: previewing "${pr.label}". /${$.plugin.name}:plugin preview real goes back.` }
+    }
+    if (verb === 'welcome') {
+      await attempt(() => $.store.set('welcomed', false), undefined)
+      await update($, isWelcomed, () => false)
+      return { text: `${NAME}: the welcome card is back above the bar.` }
+    }
+    if (verb === 'notices') {
+      if (arg === 'reset') await attempt(() => $.store.set('dismissedNotices', []), undefined)
+      await refreshNotices($)
+      const n = (await attempt(() => read($, notices), [] as TeamNotice[])).length
+      return { text: `${NAME}: ${n === 0 ? 'no notifications from the team' : `${n} ${n === 1 ? 'notification' : 'notifications'} from the team`}.` }
     }
     if (verb === 'upgrade') {
       await upgrade($)
@@ -1413,7 +1612,8 @@ async function turnOffMod($: Dollar): Promise<void> {
   stop?.abort()
   await saveSettings($, { enabled: false, hidden: true })
   await update($, isExpanded, () => false)
-  $.ui.toast(`${NAME}: bar hidden and AI Coach paused. /assistant show brings both back.`)
+  $.clock.after(0, () => void attempt(() => reportEvent($, 'bar_hidden'), undefined))
+  $.ui.toast(`${NAME}: bar hidden and the Self-Improving System paused. /${$.plugin.name}:plugin show brings both back.`)
 }
 
 /** "2d ago", or "never" for a missing time. */
@@ -1425,15 +1625,15 @@ function when(now: number, at: number | string | null): string {
 
 /** One word per Self-improving state, used everywhere it shows. */
 function selfState(v: View): { word: 'On' | 'Off' | 'Checking…'; color: string } {
-  // Off when paused (older installs) or when both coach settings are off.
-  if (!v.enabled || (!v.selfOn && !v.expertOn)) return { word: 'Off', color: MUTED }
+  // Off when paused (older installs) or when Self-Improving is switched off.
+  if (!v.enabled || !v.selfOn) return { word: 'Off', color: MUTED }
   if (v.busy) return { word: 'Checking…', color: CAUTION }
   return { word: 'On', color: GOOD }
 }
 
-function isBehind(v: View): boolean {
-  const h = v.health
-  return !!(h?.version && h.latest && h.version !== h.latest && !h.version.endsWith('-local'))
+/** Expert Advice's word and color in the bar. */
+function expertState(v: View): { word: 'On' | 'Off'; color: string } {
+  return v.enabled && v.expertOn ? { word: 'On', color: GOOD } : { word: 'Off', color: MUTED }
 }
 
 /** A suggestion's file in the member's words: their skill, CLAUDE.md, a rule or a wiki page. */
@@ -1455,12 +1655,12 @@ function targetLabel(target: string): string {
 function healthLines(v: View): { label: string; value: string; tone?: string }[] {
   const h = v.health
   if (!h) return [{ label: 'Checking', value: '…' }]
-  const behind = isBehind(v)
   return [
     {
       label: 'BuildPartner.ai',
-      value: `${h.version ? `v${h.version}` : 'unknown version'} · updated ${when(v.now, h.pluginUpdatedAt)}${behind ? ` · v${h.latest} ready, restart Claude Code to get it` : h.latest ? ' · up to date' : ''}`,
-      tone: behind ? CAUTION : GOOD,
+      // The plugin updates itself every hour (hooks/plugin-update.mjs), so this needs no version check.
+      value: `${h.version ? `v${h.version}` : 'unknown version'} · updated ${when(v.now, h.pluginUpdatedAt)} · updates itself`,
+      tone: GOOD,
     },
     {
       label: 'Your skills',
@@ -1491,16 +1691,18 @@ const PREVIEWS: readonly { key: string; label: string }[] = [
   { key: 'new', label: 'New member' },
   { key: 'suggestions', label: 'Suggestions waiting' },
   { key: 'expert', label: 'Expert question' },
-  { key: 'update', label: 'Update ready' },
   { key: 'signedout', label: 'Not signed in' },
+  { key: 'welcome', label: 'First run (welcome card)' },
+  { key: 'notice', label: 'Notification from the team' },
+  { key: 'video', label: 'New video from Austin' },
 ]
 
 /** The view with a preview state laid over it. */
 function withPreview(v: View, key: string): View {
   if (!v.dev || !key) return v
   const now = v.now
-  const plan = (name: string, paid: boolean, creditsLeft: number | null, hasCoach: boolean): AssistantPlan => ({ name, paid, creditsLeft, hasCoach, at: now })
-  const health = v.health ?? { version: null, latest: null, pluginUpdatedAt: null, skillsUpdatedAt: null, skillCount: 0, ccVersion: null, apiBase: null, isSignedIn: true, at: now }
+  const plan = (name: string, paid: boolean, creditsLeft: number | null, hasCoach: boolean): MemberPlan => ({ name, paid, creditsLeft, hasCoach, at: now })
+  const health = v.health ?? { version: null, pluginUpdatedAt: null, skillsUpdatedAt: null, skillCount: 0, ccVersion: null, apiBase: null, isSignedIn: true, at: now }
   switch (key) {
     case 'free':
       return { ...v, plan: plan('Free', false, 3, false) }
@@ -1516,10 +1718,14 @@ function withPreview(v: View, key: string): View {
       return { ...v, list: [{ ...DEMO, lastSeen: now }, { ...DEMO, id: 'demo-skill', type: 'skill_fix', target: '.claude/skills/weekly-report/SKILL.md', change: 'Add a step: pull last week numbers before drafting.', lastSeen: now }] }
     case 'expert':
       return { ...v, list: [], ex: { category: 'sales', topic: 'Starter tier pricing', question: 'Should the starter offer be $49 a month or $490 a year?', at: now } }
-    case 'update':
-      return { ...v, health: { ...health, version: '0.15.5', latest: '0.15.6' } }
     case 'signedout':
       return { ...v, health: { ...health, isSignedIn: false } }
+    case 'welcome':
+      return { ...v, welcomed: false }
+    case 'notice':
+      return { ...v, welcomed: true, notice: { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' } }
+    case 'video':
+      return { ...v, welcomed: true, notice: { id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' } }
     default:
       return v
   }
@@ -1530,8 +1736,8 @@ function debugLines(v: View): string[] {
   const h = v.health
   const run = v.run
   return [
-    `plugin ${v.pluginName}${h?.version ? ` v${h.version}` : ''} · latest on channel ${h?.latest ?? '?'} · Claude Code ${h?.ccVersion ?? '?'}`,
-    `surface ${v.surface || '?'} · api ${h?.apiBase ?? '?'} · signed in ${h?.isSignedIn ? 'yes' : 'no'}`,
+    `plugin ${v.pluginName}${h?.version ? ` v${h.version}` : ''} · Claude Code ${h?.ccVersion ?? '?'}`,
+    `surface ${v.surface || '?'} · api ${h?.apiBase ?? '?'} · signed in ${h?.isSignedIn ? `as ${h.account ?? 'unknown account'}` : 'no'}`,
     `tools ${v.tools.join(', ') || 'none found'}`,
     `self-improving ${selfState(v).word} · ${v.watch.length} watching · ${v.list.length} pending · last run ${run ? `${ago(v.now, run.at)} (${run.seen} seen, ${run.promoted} promoted${run.tokens ? `, ${run.tokens} tokens` : ''}${run.note ? `, ${run.note}` : ''})` : 'none'}`,
     `health gathered ${h ? ago(v.now, h.at) : 'not yet'}`,
@@ -1585,10 +1791,13 @@ function details($: Dollar, D: Elements, v: View) {
       {children as JSX.Element[]}
     </Box>
   )
-  // One half of AI Coach: its name and switch on top, then (only while on) what it found.
+  // One half of the system: its name and switch on top, then (only while on) what it found.
   // A Button holds only text, so the switch is drawn in glyphs: knob right and green when on.
-  const coachBlock = (key: 'selfOn' | 'expertOn', name: string, hint: string, on: boolean, body: unknown[]) => (
-    <Box key={`coach-${key}`} flexDirection="column" rowGap={1} borderStyle="round" borderColor={LINE} paddingX={1}>
+  // A box inside the section's box reads as clutter in the terminal, so the border is desktop-only.
+  const desktop = v.surface === 'desktop'
+  const frame = desktop ? { borderStyle: 'round' as const, borderColor: LINE, paddingX: 1 } : { paddingLeft: 1 }
+  const halfBlock = (key: 'selfOn' | 'expertOn', name: string, hint: string, on: boolean, body: unknown[]) => (
+    <Box key={`coach-${key}`} flexDirection="column" rowGap={1} {...frame}>
       <Box flexDirection="row" alignItems="center" columnGap={2}>
         <Box flexDirection="column" flexGrow={1} flexShrink={1}>
           <Text bold>{name}</Text>
@@ -1602,25 +1811,26 @@ function details($: Dollar, D: Elements, v: View) {
     </Box>
   )
   const progress = (n: number) => Array.from({ length: SESSIONS_BAR }, (_, i) => (i < n ? '●' : '○')).join('')
-  const state = selfState(v)
+  const anyOn = v.enabled && (v.selfOn || v.expertOn)
   const armed = offArmedAt > 0 && v.now - offArmedAt <= 5_000
   const isFresh = v.watch.length === 0 && v.list.length === 0
+  const out = isOutOfRuns(v.plan)
   return (
     <Box flexDirection="column" rowGap={1} marginTop={1}>
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
-        {section('d-self', 'AI Coach', [
-          // Status of the coach as a whole, then one block per half with its own switch and what it found.
+        {section('d-self', 'Self-Improving System', [
+          // The reviewer's status, then one block per half with its own switch and what it found.
           <Text>
-            <Text bold color={state.color}>
-              ● {state.word}
+            <Text bold color={anyOn ? (v.busy ? CAUTION : GOOD) : MUTED}>
+              ● {anyOn ? (v.busy ? 'Checking…' : 'On') : 'Off'}
             </Text>
             <Text dimColor>
-              {state.word === 'Off'
+              {!anyOn
                 ? ' · turn on Self-Improving or Expert Advice to start'
                 : ` · checks every ${DEFAULTS.every} turns and after you correct Claude · ${v.run ? `last check ${ago(v.now, v.run.at)}` : 'no check yet'}`}
             </Text>
           </Text>,
-          coachBlock('selfOn', 'Self-Improving', 'Suggests skills to create or improve from how you work.', v.selfOn, [
+          halfBlock('selfOn', 'Self-Improving', 'Suggests skills to create or improve from how you work.', v.selfOn, [
             isFresh ? (
               <Text dimColor wrap="wrap">
                 {v.scanning
@@ -1662,7 +1872,7 @@ function details($: Dollar, D: Elements, v: View) {
               )}
             </Box>,
           ]),
-          coachBlock('expertOn', 'Expert Advice', 'Flags business decisions worth asking an expert about.', v.expertOn, [
+          halfBlock('expertOn', 'Expert Advice', 'Flags business decisions worth asking an expert about.', v.expertOn, [
             v.ex ? (
               <Text wrap="wrap">
                 <Text dimColor>Flagged: </Text>
@@ -1672,13 +1882,13 @@ function details($: Dollar, D: Elements, v: View) {
               <Text dimColor>Nothing flagged yet.</Text>
             ),
           ]),
-          state.word === 'Off' ? (
+          !anyOn ? (
             ''
           ) : (
             <Box flexDirection="row">
               <Button
                 key="now"
-                label={v.busy && !v.scanning ? 'AI Coach is reviewing…' : 'Have AI Coach review this session'}
+                label={v.busy && !v.scanning ? 'Reviewing this session…' : 'Review this session now'}
                 variant="primary"
                 onPress={async () => {
                   await update($, isExpanded, () => false)
@@ -1686,6 +1896,40 @@ function details($: Dollar, D: Elements, v: View) {
                 }}
               />
             </Box>
+          ),
+        ])}
+        {section('d-tools', 'Additional tools', [
+          // Everything that used to sit on the bar's second row: one press starts a prompt with the tool.
+          v.plan?.hasCoach ? (
+            <Box key="tool-coach" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
+              <Button key="message-coach" label="Message Coach" onPress={() => messageCoach($)} />
+              <Text dimColor>Opens your coach chat on {NAME}.</Text>
+            </Box>
+          ) : (
+            ''
+          ),
+          ...BP_TOOLS.map(t => {
+            // connectedTools fills in the plugin that serves the tool (bp-dev or buildpartner).
+            const live = connectedTools(v).find(c => c.key === t.key)
+            return live ? (
+              <Box key={`tool-${t.key}`} flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
+                <Button key={`tool-btn-${t.key}`} label={t.label} onPress={() => creditTool($, () => handOver($, live.prompt, 'prepend'))} />
+                <Text dimColor wrap="truncate">{out && CREDIT_ITEMS.includes(t.key) ? 'Free runs used up. Press to see plans.' : t.hint}</Text>
+              </Box>
+            ) : (
+              <Box key={`tool-${t.key}`} flexDirection="row" alignItems="center" columnGap={1}>
+                {desktop && Svg ? <Svg source={dot(MUTED)} alt="Not connected" width={10} height={10} /> : <Text color={MUTED}>●</Text>}
+                <Text dimColor>{t.label} · not connected</Text>
+              </Box>
+            )
+          }),
+          out ? (
+            <Box key="tool-upgrade" flexDirection="row" alignItems="center" columnGap={1}>
+              <Text dimColor>Free runs used up</Text>
+              <Button key="upgrade-tools" label="Upgrade" variant="primary" onPress={() => upgrade($)} />
+            </Box>
+          ) : (
+            ''
           ),
         ])}
         {section('d-custom', 'Customize', [
@@ -1700,22 +1944,6 @@ function details($: Dollar, D: Elements, v: View) {
               </Box>
             </Box>
           )),
-          // Which BuildPartner.ai tools are set up in this session: shown here, not in the bar.
-          <Box flexDirection="column">
-            <Text dimColor>Connected in this session</Text>
-            <Box flexDirection="row" flexWrap="wrap" columnGap={3} rowGap={1} paddingX={1}>
-              {BP_TOOLS.map(t => {
-                const isOn = v.tools.some(x => x.startsWith(`${t.key}:`))
-                return (
-                  <Box key={`conn-${t.key}`} flexDirection="row" alignItems="center" columnGap={1}>
-                    {Svg ? <Svg source={dot(isOn ? GOOD : MUTED)} alt={isOn ? 'Connected' : 'Not connected'} width={10} height={10} /> : <Text color={isOn ? GOOD : MUTED}>●</Text>}
-                    <Text dimColor={!isOn}>{t.label}</Text>
-                    {isOn ? '' : <Text dimColor>not connected</Text>}
-                  </Box>
-                )
-              })}
-            </Box>
-          </Box>,
           <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
             <Button key="dashboard" plain label="Open dashboard ›" onPress={() => openDashboard($)} />
             <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai bar'} onPress={() => turnOffMod($)} />
@@ -1744,7 +1972,6 @@ function details($: Dollar, D: Elements, v: View) {
         <Text dimColor wrap="truncate">
           {healthFooter(v)}
           {v.health && !v.health.isSignedIn ? <Text color={BAD}> · Not signed in, run the BuildPartner.ai install again</Text> : ''}
-          {isBehind(v) ? <Text color={CAUTION}> · v{v.health?.latest} ready, restart Claude Code</Text> : ''}
         </Text>
         <Button key="collapse-bottom" label="▴ Collapse" onPress={() => update($, isExpanded, () => false)} />
       </Box>
@@ -1762,7 +1989,7 @@ function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], picture
         {Svg ? <Svg source={LOGO} alt="BuildPartner.ai" width={18} height={18} /> : ''}
         <Text bold>BuildPartner.ai</Text>
         <Text dimColor>
-          · AI Coach · {list.length === 0 ? 'all caught up' : `${list.length} ${list.length === 1 ? 'suggestion' : 'suggestions'}`}
+          · Self-Improving System · {list.length === 0 ? 'all caught up' : `${list.length} ${list.length === 1 ? 'suggestion' : 'suggestions'}`}
         </Text>
       </Box>
       {list.length === 0 ? <Text dimColor>Nothing waiting. New suggestions show up in the bar.</Text> : ''}
@@ -1808,13 +2035,12 @@ function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], picture
   )
 }
 
-/** Desktop, as the original mod draws it: row 1 the name, Self-Improving and the one thing waiting; row 2 the tools. */
+/** Desktop: one line. The name, Self-Improving System and Expert Advice with their switches, and the one thing waiting. */
 function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const Svg = svgOf(D)
   if (!Svg) return drawPlain($, D, v, toggle)
   const { Box, Text, Button } = D
   const top = v.list[0]
-  const connected = connectedTools(v).filter(t => !v.off.includes(t.key))
   // A hover card in the app's own colors (as the original mod draws them): no forced ink.
   const card = (title: string, lines: string[]) => (
     <Box
@@ -1841,22 +2067,20 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   // The first-run look is part of Self-Improving, so it sits inside its block.
   const showScan = v.scanning || (!v.scanned && v.enabled && v.watch.length + v.list.length === 0)
   const self = (
-    <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap={1} flexShrink={0}>
-      <Svg source={sparkle(state.color)} alt={`AI Coach ${state.word}`} width={18} height={18} />
-      <Text>AI Coach</Text>
-      <Text bold color={state.color}>
-        {state.word}
-      </Text>
+    <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap="xs" flexShrink={0}>
+      <Svg source={sparkle()} alt="" width={18} height={18} />
+      {/* Same shape as Expert Advice: icon, then one button with the name and its On/Off, so the spacing matches. */}
+      <Button key="self-open" plain onPress={toggle}>
+        <Text>Self-Improving System</Text> <Text bold color={state.color}>{state.word}</Text>
+      </Button>
       {showScan ? (
         <Text dimColor>· {v.scanning ? 'reading your last 5 sessions…' : `learn from your last ${PAST_SESSIONS} sessions`}</Text>
       ) : (
         ''
       )}
       {showScan && !v.scanning ? <Button key="scan-past-bar" label="Start" variant="primary" onPress={() => scanPast($)} /> : ''}
-      {card('AI Coach', [
-        v.enabled
-          ? [v.selfOn ? 'Suggests skills to create or improve.' : '', v.expertOn ? 'Flags decisions worth asking an expert.' : ''].filter(Boolean).join(' ') || 'Both coach settings are off. Turn one on from the expanded bar.'
-          : 'Off. Turn on Self-Improving or Expert Advice from the expanded bar.',
+      {card('Self-Improving System', [
+        v.enabled && v.selfOn ? 'Suggests skills to create or improve from how you work.' : 'Off. Turn it on from the expanded bar.',
         v.watch.length + v.list.length === 0
           ? `Nothing noticed yet. It checks every ${DEFAULTS.every} turns and right after you correct Claude.`
           : `${v.list.length} ready for you · ${v.watch.length} noticed`,
@@ -1865,8 +2089,23 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
     </Box>
   )
 
-  // The suggestion waiting, or the question worth an expert, takes the right of the row.
+  // Expert Advice: its switch word, and one press asks the expert about this conversation.
   const out = isOutOfRuns(v.plan)
+  const ex = expertState(v)
+  const expertItem = (
+    <Box key="tool-expert" position="relative" flexDirection="row" alignItems="center" columnGap="xs" flexShrink={0}>
+      <Text>✦</Text>
+      <Button key="ask-expert" plain onPress={() => askExpert($)}>
+        <Text>Expert Advice</Text> <Text bold color={ex.color}>{ex.word}</Text>
+      </Button>
+      {card('Expert Advice', [
+        v.ex ? `Flagged: ${v.ex.question}` : 'Flags decisions in this conversation worth asking an expert about.',
+        out ? 'You have used your free runs. Press to see plans.' : 'Press to ask: it fills /bp-dev:expert-advice into the prompt.',
+      ])}
+    </Box>
+  )
+
+  // The suggestion waiting takes the right of the row.
   const middle =
     top && v.enabled ? (
       <Box flexDirection="row" alignItems="center" columnGap={1} flexShrink={0}>
@@ -1899,85 +2138,56 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
 
   return (
     <Box key="bp-band" flexDirection="column" paddingX={1} rowGap={1}>
+      {topCardDesktop($, D, v, Svg)}
       {nudge}
-      <Box flexDirection="row" flexWrap="nowrap" alignItems="center" columnGap={3}>
-        <Box flexDirection="row" alignItems="center" columnGap={1} flexShrink={0}>
+      <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2} rowGap={1}>
+        <Box flexDirection="row" alignItems="center" columnGap="xs" flexShrink={0}>
           <Svg source={LOGO} alt="BuildPartner.ai" width={20} height={20} />
           <Text bold>{NAME}</Text>
           {v.dev ? <Text color={CAUTION}>DEV</Text> : ''}
-          {isBehind(v) ? <Text color={CAUTION}>Update ready</Text> : ''}
         </Box>
         {v.off.includes('self') ? '' : self}
+        {v.off.includes('expert') ? '' : expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
+          {out ? <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} /> : ''}
           {middle}
           <Button key="expand" plain onPress={toggle}>
             <Text bold>{v.open ? '▴' : '▾'}</Text>
           </Button>
         </Box>
       </Box>
-      <Box key="bp-tools" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2} rowGap={1}>
-        {/* Each tool is one press: its mark and name inside the Button, so they sit together. */}
-        {v.off.includes('expert') ? (
-          ''
-        ) : (
-          <Box key="tool-expert" position="relative" flexDirection="row" alignItems="center">
-            <Button key="ask-expert" plain onPress={() => askExpert($)}>
-              <Text color={CLAY}>✦</Text> <Text bold>Ask the Expert</Text>
-            </Button>
-            {card('Ask the Expert', [
-              v.ex ? `Flagged: ${v.ex.question}` : 'Asks the right expert framework about the decision in this conversation.',
-              out ? 'You have used your free runs. Press to see plans.' : 'Fills /bp-dev:expert-advice into the prompt.',
-            ])}
-          </Box>
-        )}
-        {v.off.includes('coach') || !v.plan?.hasCoach ? (
-          ''
-        ) : (
-          <Box key="tool-coach" position="relative" flexDirection="row" alignItems="center">
-            <Button key="message-coach" plain onPress={() => messageCoach($)}>
-              <Text color={CLAY}>›</Text> <Text>Message Coach</Text>
-            </Button>
-            {card('Message Coach', ['Opens your coach chat on BuildPartner.ai.'])}
-          </Box>
-        )}
-        {connected.map(t => (
-          <Box key={`tool-${t.key}`} position="relative" flexDirection="row" alignItems="center">
-            {/* No status dot: only connected tools are drawn, so every dot would say the same thing. */}
-            <Button key={`tool-btn-${t.key}`} plain onPress={() => creditTool($, () => handOver($, t.prompt, 'prepend'))}>
-              <Text>{t.label}</Text>
-            </Button>
-            {card(t.label, [t.hint, out && CREDIT_ITEMS.includes(t.key) ? 'You have used your free runs. Press to see plans.' : 'Press to start a prompt with it.'])}
-          </Box>
-        ))}
-        {out ? (
-          <Box key="tool-upgrade" flexDirection="row" alignItems="center" columnGap={1}>
-            <Text dimColor>Free runs used up</Text>
-            <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} />
-          </Box>
-        ) : (
-          ''
-        )}
-      </Box>
       {v.open ? details($, D, v) : ''}
     </Box>
   )
 }
 
-/** Terminal and the other surfaces: the same bar in words. */
+/** Terminal and the other surfaces: the same bar in words, one line that fits 80 columns. */
 function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const { Box, Text, Button } = D
   const top = v.list[0]
   const state = selfState(v)
-  const tail = `AI Coach ${state.word}${v.run && v.enabled ? ` · checked ${ago(v.now, v.run.at)}` : ''}`
-  const extra = `${isOutOfRuns(v.plan) ? ' · free runs used up, /assistant upgrade' : ''}${isBehind(v) ? ' · update ready' : ''}${v.dev ? ' · DEV' : ''}`
+  const ex = expertState(v)
+  const out = isOutOfRuns(v.plan)
+  // Under 70 columns the long names would fold the line, so the short ones stand in.
+  const short = v.room < 70
+  // The "checked 3m ago" time lives in the expanded view: here it only pushed the line past 80 columns.
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row" gap={1}>
-        <Button key="expand" plain label={v.open ? '▾' : '▸'} onPress={toggle} />
+      {topCardPlain($, D, v)}
+      <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+        <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={toggle} />
         <Text>
           <Text bold>{NAME}</Text>
-          <Text dimColor> · {cut(tail + extra, Math.max(10, v.room - NAME.length - 6))}</Text>
+          <Text dimColor> · {short ? 'Self-Improving' : 'Self-Improving System'} </Text>
+          <Text bold color={state.color}>
+            {state.word}
+          </Text>
+          <Text dimColor> ·</Text>
         </Text>
+        <Button key="ask-expert-bar" plain onPress={() => askExpert($)}>
+          <Text dimColor>{short ? 'Expert' : 'Expert Advice'}</Text> <Text bold color={ex.color}>{ex.word}</Text>
+        </Button>
+        {v.dev ? <Text color={CAUTION}>DEV</Text> : ''}
       </Box>
       {top && v.enabled && !v.open ? (
         <Box flexDirection="row" gap={1}>
@@ -1991,6 +2201,11 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
           <Text>{cut(`Before you decide on ${v.ex.topic ?? 'this'}, ask an expert`, Math.max(10, v.room - 30))}</Text>
           <Button key="ask-expert" label="Ask an expert" variant="primary" onPress={() => askExpert($)} />
           <Button key="skip-expert" label="✕" onPress={() => skipExpert($)} />
+        </Box>
+      ) : out && !v.open ? (
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>Free runs used up</Text>
+          <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} />
         </Box>
       ) : (
         ''
