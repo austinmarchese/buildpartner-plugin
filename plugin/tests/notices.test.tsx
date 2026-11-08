@@ -106,6 +106,6 @@ test('the bar is one line: Self-Improving System and Expert Advice, tools only w
   await ui.unmount()
   const plain = await $.ui.mount(BAND('terminal'))
   expect((await plain.find({ type: 'Text', text: /Self-Improving System/ }))?.text).toContain('Self-Improving System')
-  expect((await plain.find({ type: 'Button', key: 'ask-expert-bar' }))?.text).toMatch(/Expert Advice (On|Off)/)
+  expect((await plain.find({ type: 'Button', key: 'ask-expert-bar' }))?.text).toMatch(/Expert Advice: (On|Off)/)
   await plain.unmount()
 })

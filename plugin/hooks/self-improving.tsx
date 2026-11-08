@@ -1087,7 +1087,7 @@ const WELCOME = {
   lines: [
     'This bar stays above your prompt in every session.',
     `Self-Improving System reads this conversation every ${DEFAULTS.every} turns and suggests skills to create or fix. Nothing changes until you press Apply.`,
-    'Expert Advice flags decisions worth asking an expert about. Press it to ask. More tools sit under ▾.',
+    'Expert Advice flags decisions worth asking an expert about, with one press to ask. More tools sit under ▾.',
   ],
 }
 
@@ -2067,12 +2067,12 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   // The first-run look is part of Self-Improving, so it sits inside its block.
   const showScan = v.scanning || (!v.scanned && v.enabled && v.watch.length + v.list.length === 0)
   const self = (
-    <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap="xs" flexShrink={0}>
-      <Svg source={sparkle()} alt="" width={18} height={18} />
-      {/* Same shape as Expert Advice: icon, then one button with the name and its On/Off, so the spacing matches. */}
-      <Button key="self-open" plain onPress={toggle}>
-        <Text>Self-Improving System</Text> <Text bold color={state.color}>{state.word}</Text>
-      </Button>
+    <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
+      {/* Same shape as Expert Advice: the icon tight to "Name: On", the On/Off in its status color. A Button's padding pushed the icon away, so the name is plain text. */}
+      <Svg source={sparkle(CLAY)} alt={`Self-Improving System ${state.word}`} width={18} height={18} />
+      <Text>
+        {' '}Self-Improving System: <Text bold color={state.color}>{state.word}</Text>
+      </Text>
       {showScan ? (
         <Text dimColor>· {v.scanning ? 'reading your last 5 sessions…' : `learn from your last ${PAST_SESSIONS} sessions`}</Text>
       ) : (
@@ -2093,14 +2093,13 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const out = isOutOfRuns(v.plan)
   const ex = expertState(v)
   const expertItem = (
-    <Box key="tool-expert" position="relative" flexDirection="row" alignItems="center" columnGap="xs" flexShrink={0}>
-      <Text>✦</Text>
-      <Button key="ask-expert" plain onPress={() => askExpert($)}>
-        <Text>Expert Advice</Text> <Text bold color={ex.color}>{ex.word}</Text>
-      </Button>
+    <Box key="tool-expert" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
+      <Text>
+        <Text color={CLAY}>✦</Text> Expert Advice: <Text bold color={ex.color}>{ex.word}</Text>
+      </Text>
       {card('Expert Advice', [
         v.ex ? `Flagged: ${v.ex.question}` : 'Flags decisions in this conversation worth asking an expert about.',
-        out ? 'You have used your free runs. Press to see plans.' : 'Press to ask: it fills /bp-dev:expert-advice into the prompt.',
+        out ? 'You have used your free runs.' : 'When it flags one, Ask the expert fills /bp-dev:expert-advice into the prompt.',
       ])}
     </Box>
   )
@@ -2178,14 +2177,14 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={toggle} />
         <Text>
           <Text bold>{NAME}</Text>
-          <Text dimColor> · {short ? 'Self-Improving' : 'Self-Improving System'} </Text>
+          <Text dimColor> · {short ? 'Self-Improving' : 'Self-Improving System'}: </Text>
           <Text bold color={state.color}>
             {state.word}
           </Text>
           <Text dimColor> ·</Text>
         </Text>
         <Button key="ask-expert-bar" plain onPress={() => askExpert($)}>
-          <Text dimColor>{short ? 'Expert' : 'Expert Advice'}</Text> <Text bold color={ex.color}>{ex.word}</Text>
+          <Text dimColor>{short ? 'Expert' : 'Expert Advice'}:</Text> <Text bold color={ex.color}>{ex.word}</Text>
         </Button>
         {v.dev ? <Text color={CAUTION}>DEV</Text> : ''}
       </Box>
