@@ -82,6 +82,8 @@ const health = atom({ plugin: 'bp-dev', key: 'health' } as const, null as BarHea
 // Notifications from the BuildPartner.ai team the member has not dismissed, newest first.
 const notices = atom({ plugin: 'bp-dev', key: 'notices' } as const, [] as TeamNotice[], { shape: 'nt-1' })
 // The first-run welcome card was seen. True until the store says otherwise, so it never flashes.
+// Which of the team's notices shows, when there is more than one (Next steps through them).
+const noticeAt = atom({ plugin: 'bp-dev', key: 'noticeAt' } as const, 0)
 const isWelcomed = atom({ plugin: 'bp-dev', key: 'isWelcomed' } as const, true)
 
 type Settings = typeof DEFAULTS
@@ -1251,12 +1253,30 @@ const BELL = svg(
 // The first-run card. Admin > Mod shows the same words (MOD_WELCOME in
 // apps/web/lib/mod-notices.ts, guarded by a test): change the two together.
 const WELCOME = {
-  title: `Welcome to ${NAME} in Claude Code`,
+  title: `Welcome to ${NAME}`,
   lines: [
-    'This bar stays above your prompt in every session.',
-    `Self-Improving System reads this conversation every ${DEFAULTS.every} turns and suggests skills to create or fix. Nothing changes until you press Apply.`,
-    'Expert Advice flags decisions worth asking an expert about, with one press to ask. More tools sit under ▾.',
+    'Self-Improving System watches for the moments you correct Claude, then suggests a rule or skill so it gets it right next time.',
+    'Expert Advice spots decisions in your conversation and brings in proven expert frameworks to answer them.',
+    'Nothing changes until you press Apply. More tools are under ▾.',
   ],
+}
+
+// The one first-run step: read the last few sessions in this project for fixes. Shown in the
+// welcome card first, then at the end of the bar until it has run once.
+const SCAN_LABEL = 'Review recent sessions'
+const SCAN_HELP = [
+  'Reads your recent Claude Code sessions in this project and suggests fixes for what Claude got wrong.',
+  'Nothing changes until you press Apply.',
+]
+
+async function startFromWelcome($: Dollar): Promise<void> {
+  await finishWelcome($, false)
+  await scanPast($)
+}
+
+/** "From the BuildPartner.ai team" or "New video", then "· 1 of 2" when more than one waits. */
+function noticeHead(v: View): string {
+  return v.noticeCount > 1 ? ` · ${(v.noticeAt % v.noticeCount) + 1} of ${v.noticeCount}` : ''
 }
 
 /** What sits right above the bar: the welcome card on first run, else the team's newest notice. Desktop. */
@@ -1272,23 +1292,39 @@ function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Elemen
         {WELCOME.lines.map(l => (
           <Text wrap="wrap">{l}</Text>
         ))}
-        <Box flexDirection="row" columnGap={1}>
-          <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
-          <Button key="welcome-settings" plain label="Show settings" onPress={() => finishWelcome($, true)} />
-        </Box>
+        {v.scanned ? (
+          <Box flexDirection="row" columnGap={1}>
+            <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
+          </Box>
+        ) : (
+          <Box flexDirection="row" columnGap={1}>
+            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={() => startFromWelcome($)} />
+            <Button key="welcome-ok" plain label="Not now" onPress={() => finishWelcome($, false)} />
+          </Box>
+        )}
       </Box>
     )
   }
   const n = v.notice
   if (!n) return ''
+  // The same shape as a suggestion row: what it is (and 1 of 2), the message, then its buttons.
   return (
     <Box key={`bp-notice-${n.id}`} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
       <Svg source={n.kind === 'video' ? PLAY : BELL} alt="" width={16} height={16} />
-      <Box flexGrow={1} flexShrink={1}>
-        <Text wrap="wrap">{n.message}</Text>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <Text wrap="wrap">
+          <Text bold color={LOGO_TINT}>
+            {n.kind === 'video' ? 'New video' : `From the ${NAME} team`}
+          </Text>
+          <Text dimColor>{noticeHead(v)}</Text>
+        </Text>
+        <Text bold wrap="wrap">
+          {n.message}
+        </Text>
       </Box>
       {n.linkLabel ? <Button key={`notice-open-${n.id}`} label={n.linkLabel} variant="primary" onPress={() => openNotice($, n)} /> : ''}
       <Button key={`notice-dismiss-${n.id}`} plain label="Dismiss" onPress={() => dismissNotice($, n.id)} />
+      {v.noticeCount > 1 ? <Button key="notice-next" plain label="Next" onPress={() => update($, noticeAt, x => x + 1)} /> : ''}
     </Box>
   )
 }
@@ -1305,22 +1341,33 @@ function topCardPlain($: Dollar, D: Elements, v: View): JSX.Element | '' {
             {l}
           </Text>
         ))}
-        <Box flexDirection="row" gap={1}>
-          <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
-          <Button key="welcome-settings" label="Show settings" onPress={() => finishWelcome($, true)} />
-        </Box>
+        {v.scanned ? (
+          <Box flexDirection="row" gap={1}>
+            <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
+          </Box>
+        ) : (
+          <Box flexDirection="row" gap={1}>
+            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={() => startFromWelcome($)} />
+            <Button key="welcome-ok" label="Not now" onPress={() => finishWelcome($, false)} />
+          </Box>
+        )}
       </Box>
     )
   }
   const n = v.notice
   if (!n) return ''
-  const room = Math.max(10, v.room - (n.linkLabel ? n.linkLabel.length + 12 : 8))
+  const head = noticeHead(v)
+  const room = Math.max(10, v.room - (n.linkLabel ? n.linkLabel.length + 12 : 8) - head.length - (v.noticeCount > 1 ? 7 : 0))
   return (
     <Box key={`bp-notice-${n.id}`} flexDirection="row" gap={1}>
       <Text color={CLAY}>{n.kind === 'video' ? '▶' : '●'}</Text>
-      <Text>{cut(n.message, room)}</Text>
+      <Text>
+        {cut(n.message, room)}
+        <Text dimColor>{head}</Text>
+      </Text>
       {n.linkLabel ? <Button key={`notice-open-${n.id}`} label={n.linkLabel} variant="primary" onPress={() => openNotice($, n)} /> : ''}
       <Button key={`notice-dismiss-${n.id}`} label="✕" onPress={() => dismissNotice($, n.id)} />
+      {v.noticeCount > 1 ? <Button key="notice-next" label="Next" onPress={() => update($, noticeAt, x => x + 1)} /> : ''}
     </Box>
   )
 }
@@ -1350,6 +1397,9 @@ type View = {
   plan: MemberPlan | null
   /** The newest notification from the team not dismissed yet. */
   notice: TeamNotice | null
+  /** How many of the team's notices wait, and which one shows (Next). */
+  noticeCount: number
+  noticeAt: number
   /** The first-run welcome card was seen. */
   welcomed: boolean
   /** The first-run look at past sessions has run. */
@@ -1618,7 +1668,11 @@ export const register: Register = on => {
           off: await attempt(() => read($, hiddenAtom), [] as string[]),
           scanned: await attempt(() => read($, scanned), true),
           plan: await attempt(() => read($, plan), null),
-          notice: (await attempt(() => read($, notices), [] as TeamNotice[]))[0] ?? null,
+          ...(await attempt(async () => {
+            const all = await read($, notices)
+            const at = await read($, noticeAt)
+            return { notice: all.length ? all[at % all.length] : null, noticeCount: all.length, noticeAt: at }
+          }, { notice: null as TeamNotice | null, noticeCount: 0, noticeAt: 0 })),
           welcomed: await attempt(() => read($, isWelcomed), true),
           scanning: await attempt(() => read($, isScanning), false),
           health: await attempt(() => read($, health), null),
@@ -1913,7 +1967,7 @@ function withPreview(v: View, key: string): View {
     case 'welcome':
       return { ...v, welcomed: false }
     case 'notice':
-      return { ...v, welcomed: true, notice: { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' } }
+      return { ...v, welcomed: true, noticeCount: 2, noticeAt: 0, notice: { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' } }
     case 'video':
       return { ...v, welcomed: true, notice: { id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' } }
     default:
@@ -2237,11 +2291,13 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const { Box, Text, Button } = D
   const top = v.list[0]
   // A hover card in the app's own colors (as the original mod draws them): no forced ink.
-  const card = (title: string, lines: string[]) => (
+  // Kept to two or three short lines: the surface shows it the moment the pointer lands, with no delay to set.
+  const card = (title: string, lines: string[], side: 'left' | 'right' = 'left') => (
     <Box
       position="absolute"
       bottom={1}
-      left={0}
+      left={side === 'left' ? 0 : undefined}
+      right={side === 'right' ? 0 : undefined}
       display="none"
       hover={{ display: 'flex' }}
       flexDirection="column"
@@ -2259,8 +2315,8 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   )
 
   const state = selfState(v)
-  // The first-run look is part of Self-Improving, so it sits inside its block.
-  const showScan = v.scanning || (!v.scanned && v.enabled && v.watch.length + v.list.length === 0)
+  // The first-run step sits at the end of the bar, once the welcome card (which offers it first) is gone.
+  const showScan = v.welcomed && v.selfOn && (v.scanning || (!v.scanned && v.enabled && v.watch.length + v.list.length === 0))
   const self = (
     <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
       {/* Same shape as Expert Advice: the icon tight to "Name: On", the On/Off in its status color. A Button's padding pushed the icon away, so the name is plain text. */}
@@ -2268,18 +2324,13 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
       <Text>
         {' '}Self-Improving System: <Text bold color={state.color}>{state.word}</Text>
       </Text>
-      {showScan ? (
-        <Text dimColor>· {v.scanning ? 'reading your last 5 sessions…' : `learn from your last ${PAST_SESSIONS} sessions`}</Text>
-      ) : (
-        ''
-      )}
-      {showScan && !v.scanning ? <Button key="scan-past-bar" label="Start" variant="primary" onPress={() => scanPast($)} /> : ''}
       {card('Self-Improving System', [
-        v.enabled && v.selfOn ? 'Suggests skills to create or improve from how you work.' : 'Off. Turn it on from the expanded bar.',
-        v.watch.length + v.list.length === 0
-          ? `Nothing noticed yet. It checks every ${DEFAULTS.every} turns and right after you correct Claude.`
-          : `${v.list.length} ready for you · ${v.watch.length} noticed`,
-        v.run ? `Last check ${ago(v.now, v.run.at)}${v.run.note ? ` (${v.run.note})` : ''}` : 'No check yet in this session.',
+        v.enabled && v.selfOn ? 'Spots when you correct Claude and suggests the fix. Nothing changes until you press Apply.' : 'Off. Turn it on under ▾.',
+        v.list.length > 0
+          ? `${v.list.length} ${v.list.length === 1 ? 'suggestion' : 'suggestions'} ready`
+          : v.run
+            ? `Last checked ${ago(v.now, v.run.at)}`
+            : `Checks every ${DEFAULTS.every} turns and when you correct Claude.`,
       ])}
     </Box>
   )
@@ -2292,10 +2343,13 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
       <Text>
         <Text color={LOGO_TINT}>✦</Text> Expert Advice: <Text bold color={ex.color}>{ex.word}</Text>
       </Text>
-      {card('Expert Advice', [
-        v.ex ? `Flagged: ${v.ex.question}` : 'Flags decisions in this conversation worth asking an expert about.',
-        out ? 'You have used your free runs.' : 'When it flags one, Ask the expert fills /bp-dev:expert-advice into the prompt.',
-      ])}
+      {card(
+        'Expert Advice',
+        [
+          v.ex ? `Flagged: ${v.ex.question}` : 'Spots decisions in your conversation and brings in proven expert frameworks to answer them.',
+          out ? 'You have used your free runs.' : '',
+        ].filter(Boolean),
+      )}
     </Box>
   )
 
@@ -2357,6 +2411,18 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         {v.off.includes('self') ? '' : self}
         {v.off.includes('expert') ? '' : expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
+          {showScan ? (
+            <Box key="scan-past" position="relative" flexDirection="row" alignItems="center" flexShrink={0}>
+              {v.scanning ? (
+                <Text dimColor>Reviewing recent sessions…</Text>
+              ) : (
+                <Button key="scan-past-bar" label={SCAN_LABEL} variant="primary" onPress={() => scanPast($)} />
+              )}
+              {card(SCAN_LABEL, SCAN_HELP, 'right')}
+            </Box>
+          ) : (
+            ''
+          )}
           {out ? <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} /> : ''}
           {middle}
           {/* While suggestions are open, "Hide suggestions" is the only way out: no ▾. */}

@@ -33,7 +33,7 @@ function engine(on: On, notices: unknown[], events: string[] = []) {
   return clock
 }
 
-test('a new member sees the welcome card once, and Got it puts it away', async ($, on) => {
+test('a new member sees the welcome card once, and Not now puts it away', async ($, on) => {
   mock.store(on)
   mock.env(on, { HOME: '/home/m' })
   engine(on, [])
@@ -74,6 +74,22 @@ test('a notice from the team shows above the bar until dismissed', async ($, on)
   const again = await $.ui.mount(BAND('desktop'))
   expect(await again.find({ type: 'Text', text: /New video from Austin/ })).toBeUndefined()
   await again.unmount()
+})
+
+test('two notices show one at a time, 1 of 2, and Next steps to the other', async ($, on) => {
+  mock.store(on, { welcomed: true })
+  mock.env(on, { HOME: '/home/m' })
+  const second = { id: 'n2', kind: 'message', message: 'Office hours are Thursday', link_label: null, link_href: null }
+  engine(on, [NOTICE, second])
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Text', text: /1 of 2/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /New video from Austin/ })).toBeDefined()
+  await ui.press({ key: 'notice-next' })
+  expect(await ui.find({ type: 'Text', text: /Office hours are Thursday/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /2 of 2/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('hiding the bar tells Admin > Mod', async ($, on) => {
