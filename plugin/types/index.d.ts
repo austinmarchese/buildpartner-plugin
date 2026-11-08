@@ -130,6 +130,7 @@ declare module 'claude-code' {
       scanDeclined: boolean
       plan: Shaped<MemberPlan | null>
       previewAs: string
+      lastError: string
       isScanning: boolean
       appliedNow: Shaped<string[]>
       notices: Shaped<TeamNotice[]>

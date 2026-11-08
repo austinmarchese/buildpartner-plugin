@@ -110,6 +110,22 @@ test('the first-run review is a row above the bar: Not now puts it away, Review 
   await again.unmount()
 })
 
+test('Reset first run brings back the welcome card and the review offer', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true, scanDeclined: true })
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [])
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'welcome' } as never)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Text', text: /Welcome to BuildPartner\.ai/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'welcome-scan' })).toBeDefined()
+  await ui.press({ key: 'welcome-ok' })
+  // Not now on the card declines the review too, so no row is left behind.
+  expect(await ui.find({ type: 'Text', text: /Welcome to BuildPartner\.ai/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('Review recent sessions runs the review and the row says so', async ($, on) => {
   mock.store(on, { welcomed: true })
   mock.env(on, { HOME: '/home/m' })

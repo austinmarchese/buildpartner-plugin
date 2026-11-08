@@ -78,6 +78,8 @@ const appliedNow = atom({ plugin: 'bp-dev', key: 'appliedNow' } as const, [] as 
 const plan = atom({ plugin: 'bp-dev', key: 'plan' } as const, null as MemberPlan | null, { shape: 'pl-1' })
 // Dev builds only: which made-up state the bar draws, '' for the real one.
 const previewAs = atom({ plugin: 'bp-dev', key: 'previewAs' } as const, '')
+// The last press above the bar that failed, for the Debug section: "<time> · <button>: <error>", '' when none.
+const lastError = atom({ plugin: 'bp-dev', key: 'lastError' } as const, '')
 const health = atom({ plugin: 'bp-dev', key: 'health' } as const, null as BarHealth | null, { shape: 'h-1' })
 // Notifications from the BuildPartner.ai team the member has not dismissed, newest first.
 const notices = atom({ plugin: 'bp-dev', key: 'notices' } as const, [] as TeamNotice[], { shape: 'nt-1' })
@@ -757,7 +759,6 @@ async function readPast($: Dollar): Promise<string> {
     read_ += 1
   }
   const ready = (await attempt(() => read($, pending), [] as ReflectPattern[])).length
-  if (ready > 0) $.clock.after(0, () => void showSuggestions($))
   return `Read ${read_} past session${read_ === 1 ? '' : 's'}: ${ready} suggestion${ready === 1 ? '' : 's'} ready.`
 }
 
@@ -1260,7 +1261,45 @@ const SCAN_HELP = ['Reads your recent Claude Code sessions in this project and s
 
 async function startFromWelcome($: Dollar): Promise<void> {
   await finishWelcome($, false)
-  await scanPast($)
+  await runScan($)
+}
+
+/** The first-run review from a button: says what it found, since nothing else on screen does. */
+async function runScan($: Dollar): Promise<void> {
+  $.ui.toast(`${NAME}: ${await scanPast($)}`)
+}
+
+/** Puts this machine back to a new member's first run: the welcome card, then the review offer. Debug and /plugin welcome. */
+async function resetFirstRun($: Dollar): Promise<void> {
+  for (const k of ['welcomed', 'scanned', 'scanDeclined'] as const) await attempt(() => $.store.set(k, false), undefined)
+  await update($, isWelcomed, () => false)
+  await update($, scanned, () => false)
+  await update($, scanDeclined, () => false)
+  await update($, isScanning, () => false)
+  await update($, rowAt, () => 0)
+  await update($, lastError, () => '')
+  // A preview draws over the real state, so a reset shows the real bar.
+  await update($, previewAs, () => '')
+  await update($, isExpanded, () => false)
+}
+
+/**
+ * Every button above the bar runs through here. A failure is never silent: it shows a toast and
+ * lands in Debug as Last error. A press also ends a preview, since a preview draws over the
+ * state the press just changed and the click would look like it did nothing.
+ */
+function press($: Dollar, label: string, fn: () => unknown): () => Promise<void> {
+  return async () => {
+    await attempt(() => update($, previewAs, () => ''), '')
+    try {
+      await fn()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const at = new Date(await attempt(() => $.clock.now(), 0)).toISOString().slice(11, 19)
+      await attempt(() => update($, lastError, () => `${at} · ${label}: ${msg}`), '')
+      $.ui.toast(`${NAME}: ${label} did not work (${msg}).`)
+    }
+  }
 }
 
 /** Not now, on the welcome card or the row above the bar: the review is still one press away under ▾. */
@@ -1348,7 +1387,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
       icon: 'sparkle',
       header: 'Self-Improving System',
       text: SCAN_HELP[0],
-      primary: { key: 'scan-past-bar', label: SCAN_LABEL, onPress: () => scanPast($) },
+      primary: { key: 'scan-past-bar', label: SCAN_LABEL, onPress: () => runScan($) },
       secondary: { key: 'skip-scan', label: 'Not now', onPress: () => declineScan($) },
     })
   }
@@ -1417,8 +1456,8 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
             ''
           )}
         </Box>
-        {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={r.primary.onPress} /> : ''}
-        {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={r.secondary.onPress} /> : ''}
+        {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={press($, r.primary.label, r.primary.onPress)} /> : ''}
+        {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={press($, r.secondary.label, r.secondary.onPress)} /> : ''}
         {next}
       </Box>
     )
@@ -1431,8 +1470,8 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
         {cut(r.text, Math.max(10, room - buttons - count.length))}
         <Text dimColor>{count}</Text>
       </Text>
-      {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={r.primary.onPress} /> : ''}
-      {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={r.secondary.onPress} /> : ''}
+      {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={press($, r.primary.label, r.primary.onPress)} /> : ''}
+      {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={press($, r.secondary.label, r.secondary.onPress)} /> : ''}
       {next}
     </Box>
   )
@@ -1453,12 +1492,12 @@ function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Elemen
         ))}
         {v.scanned ? (
           <Box flexDirection="row" columnGap={1}>
-            <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
+            <Button key="welcome-ok" label="Got it" variant="primary" onPress={press($, 'Got it', () => finishWelcome($, false))} />
           </Box>
         ) : (
           <Box flexDirection="row" columnGap={1}>
-            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={() => startFromWelcome($)} />
-            <Button key="welcome-ok" plain label="Not now" onPress={() => Promise.all([finishWelcome($, false), declineScan($)])} />
+            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={press($, SCAN_LABEL, () => startFromWelcome($))} />
+            <Button key="welcome-ok" plain label="Not now" onPress={press($, 'Not now', () => Promise.all([finishWelcome($, false), declineScan($)]))} />
           </Box>
         )}
       </Box>
@@ -1481,12 +1520,12 @@ function topCardPlain($: Dollar, D: Elements, v: View): JSX.Element | '' {
         ))}
         {v.scanned ? (
           <Box flexDirection="row" gap={1}>
-            <Button key="welcome-ok" label="Got it" variant="primary" onPress={() => finishWelcome($, false)} />
+            <Button key="welcome-ok" label="Got it" variant="primary" onPress={press($, 'Got it', () => finishWelcome($, false))} />
           </Box>
         ) : (
           <Box flexDirection="row" gap={1}>
-            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={() => startFromWelcome($)} />
-            <Button key="welcome-ok" label="Not now" onPress={() => Promise.all([finishWelcome($, false), declineScan($)])} />
+            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={press($, SCAN_LABEL, () => startFromWelcome($))} />
+            <Button key="welcome-ok" label="Not now" onPress={press($, 'Not now', () => Promise.all([finishWelcome($, false), declineScan($)]))} />
           </Box>
         )}
       </Box>
@@ -1507,6 +1546,8 @@ type View = {
   tip: ToolTip | null
   /** Not now on the upgrade row, this session. */
   upgradeSkipped: boolean
+  /** The last press that failed ('' none). Debug. */
+  lastError: string
   /** The two halves of the bar, each with its own switch. */
   selfOn: boolean
   expertOn: boolean
@@ -1785,6 +1826,7 @@ export const register: Register = on => {
           ex: await attempt(() => read($, expert), null),
           tip: await attempt(() => read($, toolTip), null),
           upgradeSkipped: await attempt(() => read($, upgradeSkipped), false),
+          lastError: await attempt(() => read($, lastError), ''),
           ...(await attempt(async () => {
             const st = await settings($)
             return { selfOn: st.selfOn, expertOn: st.expertOn }
@@ -1932,11 +1974,8 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
       return { text: `${NAME}: previewing "${pr.label}". /${$.plugin.name}:plugin preview real goes back.` }
     }
     if (verb === 'welcome') {
-      await attempt(() => $.store.set('welcomed', false), undefined)
-      await update($, isWelcomed, () => false)
-      await attempt(() => $.store.set('scanDeclined', false), undefined)
-      await update($, scanDeclined, () => false)
-      return { text: `${NAME}: the welcome card is back above the bar.` }
+      await resetFirstRun($)
+      return { text: `${NAME}: back to a new member's first run. The welcome card is above the bar.` }
     }
     if (verb === 'notices') {
       if (arg === 'reset') await attempt(() => $.store.set('dismissedNotices', []), undefined)
@@ -2053,12 +2092,10 @@ const PREVIEWS: readonly { key: string; label: string }[] = [
   { key: 'out', label: 'Free, out of runs' },
   { key: 'pro', label: 'Pro' },
   { key: 'exec', label: 'Executive (coach)' },
-  { key: 'new', label: 'New member' },
   { key: 'suggestions', label: 'Suggestions waiting' },
   { key: 'expert', label: 'Expert question' },
   { key: 'tip', label: 'Tool tip (Web Research)' },
   { key: 'signedout', label: 'Not signed in' },
-  { key: 'welcome', label: 'First run (welcome card)' },
   { key: 'notice', label: 'Notification from the team' },
   { key: 'video', label: 'New video from Austin' },
 ]
@@ -2078,8 +2115,6 @@ function withPreview(v: View, key: string): View {
       return { ...v, plan: plan('Pro', true, null, false) }
     case 'exec':
       return { ...v, plan: plan('Executive', true, null, true) }
-    case 'new':
-      return { ...v, watch: [], list: [], ex: null, run: null, scanned: false, scanDeclined: false, scanning: false }
     case 'suggestions':
       return { ...v, list: [{ ...DEMO, lastSeen: now }, { ...DEMO, id: 'demo-skill', type: 'skill_fix', target: '.claude/skills/weekly-report/SKILL.md', change: 'Add a step: pull last week numbers before drafting.', lastSeen: now }] }
     case 'expert':
@@ -2088,8 +2123,6 @@ function withPreview(v: View, key: string): View {
       return { ...v, list: [], ex: null, tip: { key: 'web', at: now }, tools: v.tools.some(t => t.startsWith('web:')) ? v.tools : [...v.tools, 'web:bp-dev'] }
     case 'signedout':
       return { ...v, health: { ...health, isSignedIn: false } }
-    case 'welcome':
-      return { ...v, welcomed: false }
     case 'notice':
       return {
         ...v,
@@ -2119,6 +2152,8 @@ function debugLines(v: View): [string, string][] {
       'Self-Improving',
       `${selfState(v).word} · ${v.watch.length} watching · ${v.list.length} waiting · last run ${run ? `${ago(v.now, run.at)} (${run.seen} seen, ${run.promoted} shown${run.tokens ? `, ${run.tokens} tokens` : ''}${run.note ? `, ${run.note}` : ''})` : 'none'}`,
     ],
+    ['First run', `welcome card ${v.welcomed ? 'seen' : 'showing'} · review ${v.scanning ? 'running' : v.scanned ? 'done' : v.scanDeclined ? 'declined' : 'not run'}`],
+    ['Last error', v.lastError || 'none'],
     ['Health', h ? `gathered ${ago(v.now, h.at)}` : 'not gathered yet'],
   ]
 }
@@ -2207,7 +2242,7 @@ function details($: Dollar, D: Elements, v: View) {
           row('self-row', 'Self-Improving', v.selfOn ? selfLine : 'Suggests skills to create or improve from how you work.', toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))),
           v.selfOn && (!v.scanned || v.scanning) ? (
             <Box key="self-scan" flexDirection="row">
-              <Button key="scan-past" label={v.scanning ? 'Reviewing recent sessions…' : SCAN_LABEL} onPress={() => (v.scanning ? undefined : scanPast($))} />
+              <Button key="scan-past" label={v.scanning ? 'Reviewing recent sessions…' : SCAN_LABEL} onPress={() => (v.scanning ? undefined : runScan($))} />
             </Box>
           ) : (
             ''
@@ -2276,6 +2311,12 @@ function details($: Dollar, D: Elements, v: View) {
                   <Text dimColor> {value}</Text>
                 </Text>
               )),
+              row(
+                'dbg-reset',
+                'Start over as a new member',
+                'Shows the welcome card and the review offer again, for real, on this machine.',
+                <Button key="dbg-reset-first-run" label="Reset first run" onPress={() => resetFirstRun($)} />,
+              ),
               row(
                 'dbg-preview',
                 'Preview the bar as',
