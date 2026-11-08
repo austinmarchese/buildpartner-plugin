@@ -64,10 +64,8 @@ const bpTools = atom({ plugin: 'bp-dev', key: 'bpTools' } as const, [] as string
 const hiddenAtom = atom({ plugin: 'bp-dev', key: 'hiddenItems' } as const, ['founder'] as string[], { shape: 'hi-2' })
 const isHidden = atom({ plugin: 'bp-dev', key: 'isHidden' } as const, false)
 const isExpanded = atom({ plugin: 'bp-dev', key: 'isExpanded' } as const, false)
-// The suggestions card is open right above the bar (the bar's "N suggestions" button).
-const isListOpen = atom({ plugin: 'bp-dev', key: 'isListOpen' } as const, false)
-// Which suggestion the row above the bar shows (Next moves it on).
-const listAt = atom({ plugin: 'bp-dev', key: 'listAt' } as const, 0)
+// The member said Not now to the upgrade row this session: it stays out of the way (the expanded view keeps it).
+const upgradeSkipped = atom({ plugin: 'bp-dev', key: 'upgradeSkipped' } as const, false)
 // The first-run look at past sessions has run (or been skipped) for this member.
 const scanned = atom({ plugin: 'bp-dev', key: 'scanned' } as const, false)
 // The member said Not now to reviewing past sessions: the offer stays out of the way (the expanded view keeps it).
@@ -618,15 +616,7 @@ async function walkThrough($: Dollar): Promise<void> {
   )
 }
 
-/** Shows the pending suggestions as a card in the conversation (the /bp-dev:plugin suggestions row). */
-/** The bar's "N suggestions": posts the suggestions card in the conversation. The command runs a moment after the press: run inside the press itself it is refused (the same deferral the automatic card after a review uses). */
-async function toggleList($: Dollar): Promise<void> {
-  // The card with Apply and Dismiss draws right above the bar: instant, no Claude reply.
-  // (/bp-dev:plugin suggestions stays for a walk-through with Claude.)
-  await update($, isExpanded, () => false)
-  await update($, isListOpen, open => !open)
-}
-
+/** /bp-dev:plugin suggestions: the walk-through with Claude (the bar itself shows each suggestion as a row above it). */
 async function showSuggestions($: Dollar): Promise<void> {
   const list = await attempt(() => read($, pending), [] as ReflectPattern[])
   // Nothing waiting: say so at once, without starting a Claude reply.
@@ -703,7 +693,7 @@ async function remember($: Dollar, raw: string): Promise<void> {
     status: 'suggested',
   }
   await saveLedger($, map)
-  $.ui.toast(`${NAME}: added to your suggestions. Press Review in the bar to save it.`)
+  $.ui.toast(`${NAME}: added to your suggestions. It shows above the bar.`)
 }
 
 /** Switches an instruction between this project's CLAUDE.md and the one for all projects. */
@@ -1288,21 +1278,27 @@ function showScanRow(v: View): boolean {
 //
 // Every call to action takes the same shape, right above the bar: an icon, a copper
 // header (and "1 of N" when more than one waits), the text, a primary button, a quiet
-// one, and Next. One shows at a time. Open suggestions take the row's place.
+// one, and Next. One shows at a time. Anything that needs a decision from the member
+// (a suggestion, the expert question, a tool tip, the first-run review, an upgrade, a
+// notice) is one of these rows; the bar line itself holds no button but ▾.
 
 type RowButton = { key: string; label: string; onPress: () => unknown }
 type Row = {
   key: string
   icon: 'sparkle' | 'bulb' | 'bell' | 'play'
   header: string
+  /** Dim context after the header ("· CLAUDE.md"). */
+  context?: string
   text: string
+  /** A dim line under the text: why, for a suggestion. Desktop only. */
+  sub?: string
   primary?: RowButton
   secondary?: RowButton
   /** Set when the row is one of the team's notices, so it is reported seen once drawn. */
   notice?: TeamNotice
 }
 
-/** What waits above the bar, most pressing first: the expert question, a tool tip, the first-run review, then the team's notices. */
+/** What waits above the bar, most pressing first: the expert question, a tool tip, the suggestions, the first-run review, an upgrade, then the team's notices. */
 function rowsAbove($: Dollar, v: View): Row[] {
   const rows: Row[] = []
   const out = isOutOfRuns(v.plan)
@@ -1330,6 +1326,20 @@ function rowsAbove($: Dollar, v: View): Row[] {
       secondary: { key: 'skip-tip', label: 'Not now', onPress: () => skipTip($) },
     })
   }
+  // Each suggestion is its own row: what kind and where, the change, why, Add rule and Don't add.
+  for (const p of v.enabled ? v.list : []) {
+    const kind = ROW_KIND[p.type] ?? { label: TYPE_LABEL[p.type] ?? p.type, action: 'Apply', decline: 'Dismiss' }
+    rows.push({
+      key: `sugg-${p.id}`,
+      icon: 'sparkle',
+      header: kind.label,
+      context: targetLabel(p.target),
+      text: changeText(p.change),
+      sub: `${p.corrections ? 'From your correction' : `Came up in ${p.sessions.length} sessions`}: "${cut(p.evidence, 120)}"`,
+      primary: { key: `card-apply-${p.id}`, label: kind.action, onPress: () => apply($, p.id) },
+      secondary: { key: `card-dismiss-${p.id}`, label: kind.decline, onPress: () => dismiss($, p.id) },
+    })
+  }
   if (v.scanning) {
     rows.push({ key: 'scan-row', icon: 'sparkle', header: 'Self-Improving System', text: 'Reviewing your recent sessions…' })
   } else if (showScanRow(v)) {
@@ -1340,6 +1350,16 @@ function rowsAbove($: Dollar, v: View): Row[] {
       text: SCAN_HELP[0],
       primary: { key: 'scan-past-bar', label: SCAN_LABEL, onPress: () => scanPast($) },
       secondary: { key: 'skip-scan', label: 'Not now', onPress: () => declineScan($) },
+    })
+  }
+  if (out && !v.upgradeSkipped) {
+    rows.push({
+      key: 'upgrade-row',
+      icon: 'bulb',
+      header: 'Free runs used up',
+      text: 'Upgrade to keep using Expert Advice and the tools.',
+      primary: { key: 'upgrade-bar', label: 'See plans', onPress: () => upgrade($) },
+      secondary: { key: 'skip-upgrade', label: 'Not now', onPress: () => update($, upgradeSkipped, () => true) },
     })
   }
   for (const n of v.notices) {
@@ -1356,9 +1376,9 @@ function rowsAbove($: Dollar, v: View): Row[] {
   return rows
 }
 
-/** The row drawn now, or null: nothing while the welcome card or the suggestions are up. */
+/** The row drawn now, or null: nothing while the welcome card is up. */
 function shownRow($: Dollar, v: View): (Row & { i: number; n: number }) | null {
-  if (!v.welcomed || (v.listOpen && v.list.length > 0)) return null
+  if (!v.welcomed) return null
   const rows = rowsAbove($, v)
   if (rows.length === 0) return null
   const i = v.rowAt % rows.length
@@ -1381,11 +1401,21 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
             <Text bold color={LOGO_TINT}>
               {r.header}
             </Text>
-            <Text dimColor>{count}</Text>
+            <Text dimColor>
+              {r.context ? ` · ${r.context}` : ''}
+              {count}
+            </Text>
           </Text>
           <Text bold wrap="wrap">
             {r.text}
           </Text>
+          {r.sub ? (
+            <Text dimColor wrap="wrap">
+              {r.sub}
+            </Text>
+          ) : (
+            ''
+          )}
         </Box>
         {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={r.primary.onPress} /> : ''}
         {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={r.secondary.onPress} /> : ''}
@@ -1475,8 +1505,8 @@ type View = {
   run: ReflectRun | null
   ex: ExpertFlag | null
   tip: ToolTip | null
-  listOpen: boolean
-  listAt: number
+  /** Not now on the upgrade row, this session. */
+  upgradeSkipped: boolean
   /** The two halves of the bar, each with its own switch. */
   selfOn: boolean
   expertOn: boolean
@@ -1754,8 +1784,7 @@ export const register: Register = on => {
           run: await attempt(() => read($, last), null),
           ex: await attempt(() => read($, expert), null),
           tip: await attempt(() => read($, toolTip), null),
-          listOpen: await attempt(() => read($, isListOpen), false),
-          listAt: await attempt(() => read($, listAt), 0),
+          upgradeSkipped: await attempt(() => read($, upgradeSkipped), false),
           ...(await attempt(async () => {
             const st = await settings($)
             return { selfOn: st.selfOn, expertOn: st.expertOn }
@@ -1780,13 +1809,11 @@ export const register: Register = on => {
         }
         const pv = v.dev ? await attempt(() => read($, previewAs), '') : ''
         const shown = withPreview({ ...v, preview: pv }, pv)
-        // A notice counts as seen only once it is the row drawn (the welcome card and suggestions take its place).
+        // A notice counts as seen only once it is the row drawn (the welcome card takes its place).
         const drawn = shownRow($, shown)
         if (drawn?.notice) noteSeen($, drawn.notice)
         const toggle = async () => {
           const open = await update($, isExpanded, x => !x)
-          // One panel at a time: the settings close the suggestions, and the other way round (toggleList).
-          if (open) await update($, isListOpen, () => false)
           if (open) $.clock.after(0, () => void attempt(() => refreshHealth($), undefined))
         }
         const D = $.ui.resolve(e)
@@ -2277,14 +2304,8 @@ function details($: Dollar, D: Elements, v: View) {
   )
 }
 
-/** The suggestions card drawn in the conversation: one block per suggestion, then the walk-through. */
-/**
- * The suggestions above the bar, in the notification's look: one outlined row each, the icon,
- * what changes (with why, dimmed), Apply as the main button and Dismiss beside it. The
- * "N suggestions" button opens and closes them; nothing here starts a Claude reply.
- */
-// The suggestion row's words, per kind: the label first ("Suggested rule") and the main button,
-// named by what pressing it does.
+// The suggestion row's words, per kind (the row above the bar): the label first ("Suggested rule")
+// and the main button, named by what pressing it does.
 // The no button mirrors it, so it reads as a no and says nothing changes ("Don't add").
 const ROW_KIND: Record<string, { label: string; action: string; decline: string }> = {
   instruction: { label: 'Suggested rule', action: 'Add rule', decline: "Don't add" },
@@ -2298,39 +2319,6 @@ const ROW_KIND: Record<string, { label: string; action: string; decline: string 
 function changeText(change: string): string {
   const t = change.replace(/^(add|create|update)\s+(a|an|the)?\s*[\w -]{1,24}:\s*/i, '')
   return t ? t[0].toUpperCase() + t.slice(1) : change
-}
-
-function suggestionRows($: Dollar, D: Elements, list: ReflectPattern[], pictures: boolean, at: number) {
-  const { Box, Text, Button } = D
-  const Svg = pictures ? svgOf(D) : null
-  // One at a time, like a notification: the one shown, then Next to the following one.
-  const i = list.length ? at % list.length : 0
-  const p = list[i]
-  if (!p) return ''
-  return (
-    <Box key={`row-${p.id}`} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
-      {Svg ? <Svg source={sparkle(LOGO_TINT)} alt="" width={16} height={16} /> : <Text color={LOGO_TINT}>✦</Text>}
-      {/* Where it came from and which file, then the change, then why: the full card's information in the notification's look. */}
-      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-        <Text wrap="wrap">
-          <Text bold color={LOGO_TINT}>
-            {(ROW_KIND[p.type] ?? { label: TYPE_LABEL[p.type] ?? p.type }).label}
-          </Text>
-          <Text dimColor> · {targetLabel(p.target)}</Text>
-          {list.length > 1 ? <Text dimColor>{` · ${i + 1} of ${list.length}`}</Text> : ''}
-        </Text>
-        <Text bold wrap="wrap">
-          {changeText(p.change)}
-        </Text>
-        <Text dimColor wrap="wrap">
-          {p.corrections ? 'From your correction' : `Came up in ${p.sessions.length} sessions`}: "{cut(p.evidence, 120)}"
-        </Text>
-      </Box>
-      <Button key={`card-apply-${p.id}`} label={(ROW_KIND[p.type] ?? { action: 'Apply' }).action} variant="primary" onPress={() => apply($, p.id)} />
-      <Button key={`card-dismiss-${p.id}`} plain label={ROW_KIND[p.type]?.decline ?? 'Dismiss'} onPress={() => dismiss($, p.id)} />
-      {list.length > 1 ? <Button key="card-next" plain label="Next" onPress={() => update($, listAt, n => n + 1)} /> : ''}
-    </Box>
-  )
 }
 
 function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], pictures: boolean) {
@@ -2393,7 +2381,6 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const Svg = svgOf(D)
   if (!Svg) return drawPlain($, D, v, toggle)
   const { Box, Text, Button } = D
-  const top = v.list[0]
   // A hover card in the app's own colors (as the original mod draws them): no forced ink.
   // Kept to two or three short lines: the surface shows it the moment the pointer lands, with no delay to set.
   const card = (title: string, lines: string[]) => (
@@ -2454,26 +2441,11 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
     </Box>
   )
 
-  // The suggestion waiting takes the right of the row.
-  // Hidden while the settings are open: ▴ is then the one way out (one panel at a time).
-  const middle =
-    top && v.enabled && !v.open ? (
-      // One control: the count is the button that opens them.
-      <Button
-        key="review-suggestions"
-        plain
-        label={v.listOpen ? 'Hide suggestions' : `${v.list.length} ${v.list.length === 1 ? 'suggestion' : 'suggestions'}`}
-        onPress={() => toggleList($)}
-      />
-    ) : (
-      ''
-    )
-
+  // Everything that needs the member (suggestions included) is a row above: the bar line's one button is ▾.
   const row = shownRow($, v)
 
   return (
     <Box key="bp-band" flexDirection="column" paddingX={1} rowGap={1}>
-      {v.listOpen && v.list.length > 0 ? suggestionRows($, D, v.list, true, v.listAt) : ''}
       {topCardDesktop($, D, v, Svg)}
       {row ? drawRow($, D, Svg, row, v.room) : ''}
       <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2} rowGap={1}>
@@ -2485,19 +2457,12 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         {v.off.includes('self') ? '' : self}
         {v.off.includes('expert') ? '' : expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
-          {out ? <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} /> : ''}
-          {middle}
-          {/* While suggestions are open, "Hide suggestions" is the only way out: no ▾. */}
-          {v.listOpen && v.list.length > 0 ? (
-            ''
-          ) : (
-            <Button key="expand" plain onPress={toggle}>
-              <Text bold>{v.open ? '▴' : '▾'}</Text>
-            </Button>
-          )}
+          <Button key="expand" plain onPress={toggle}>
+            <Text bold>{v.open ? '▴' : '▾'}</Text>
+          </Button>
         </Box>
       </Box>
-      {v.open && !(v.listOpen && v.list.length > 0) ? details($, D, v) : ''}
+      {v.open ? details($, D, v) : ''}
     </Box>
   )
 }
@@ -2505,20 +2470,17 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
 /** Terminal and the other surfaces: the same bar in words, one line that fits 80 columns. */
 function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const { Box, Text, Button } = D
-  const top = v.list[0]
   const state = selfState(v)
   const ex = expertState(v)
-  const out = isOutOfRuns(v.plan)
   const row = shownRow($, v)
   // Under 70 columns the long names would fold the line, so the short ones stand in.
   const short = v.room < 70
   // The "checked 3m ago" time lives in the expanded view: here it only pushed the line past 80 columns.
   return (
     <Box flexDirection="column">
-      {v.listOpen && v.list.length > 0 ? suggestionRows($, D, v.list, false, v.listAt) : ''}
       {topCardPlain($, D, v)}
       <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-        {v.listOpen && v.list.length > 0 ? '' : <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={toggle} />}
+        <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={toggle} />
         <Text>
           <Text bold>{NAME}</Text>
           <Text dimColor> · {short ? 'Self-Improving' : 'Self-Improving System'}: </Text>
@@ -2527,31 +2489,13 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
           </Text>
           <Text dimColor> ·</Text>
         </Text>
-        <Button key="ask-expert-bar" plain onPress={() => askExpert($)}>
+        <Text>
           <Text dimColor>{short ? 'Expert' : 'Expert Advice'}:</Text> <Text bold color={ex.color}>{ex.word}</Text>
-        </Button>
+        </Text>
         {v.tag ? <Text color={CAUTION}>{v.tag}</Text> : ''}
       </Box>
-      {top && v.enabled && !v.open ? (
-        <Box flexDirection="row" gap={1}>
-          <Button
-            key="review-suggestions"
-            label={v.listOpen ? 'Hide suggestions' : `${v.list.length} ${v.list.length === 1 ? 'suggestion' : 'suggestions'}`}
-            variant="primary"
-            onPress={() => toggleList($)}
-          />
-        </Box>
-      ) : row && !v.open ? (
-        drawRow($, D, null, row, v.room)
-      ) : out && !v.open ? (
-        <Box flexDirection="row" gap={1}>
-          <Text dimColor>Free runs used up</Text>
-          <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} />
-        </Box>
-      ) : (
-        ''
-      )}
-      {v.open && !(v.listOpen && v.list.length > 0) ? details($, D, v) : ''}
+      {row && !v.open ? drawRow($, D, null, row, v.room) : ''}
+      {v.open ? details($, D, v) : ''}
     </Box>
   )
 }

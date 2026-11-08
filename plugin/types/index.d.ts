@@ -135,8 +135,7 @@ declare module 'claude-code' {
       notices: Shaped<TeamNotice[]>
       isWelcomed: boolean
       rowAt: number
-      isListOpen: boolean
-      listAt: number
+      upgradeSkipped: boolean
     }
   }
 }

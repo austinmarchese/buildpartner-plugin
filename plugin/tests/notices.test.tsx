@@ -93,6 +93,36 @@ test('two notices show one at a time, 1 of 2, and Next steps to the other', asyn
   await ui.unmount()
 })
 
+test('the first-run review is a row above the bar: Not now puts it away, Review runs it', async ($, on) => {
+  mock.store(on, { welcomed: true })
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [])
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeDefined()
+  await ui.press({ key: 'skip-scan' })
+  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  await ui.unmount()
+  // Declined stays declined in the next session on this machine.
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  const again = await $.ui.mount(BAND('desktop'))
+  expect(await again.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  await again.unmount()
+})
+
+test('Review recent sessions runs the review and the row says so', async ($, on) => {
+  mock.store(on, { welcomed: true })
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [])
+  on('fs.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount(BAND('desktop'))
+  await ui.press({ key: 'scan-past-bar' })
+  // No past sessions in the mock: the review ends at once and the offer is gone for good.
+  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('hiding the bar tells Admin > Mod', async ($, on) => {
   mock.store(on, { welcomed: true })
   mock.env(on, { HOME: '/home/m' })
@@ -122,47 +152,47 @@ test('the bar is one line: Self-Improving System and Expert Advice, tools only w
   await ui.unmount()
   const plain = await $.ui.mount(BAND('terminal'))
   expect((await plain.find({ type: 'Text', text: /Self-Improving System/ }))?.text).toContain('Self-Improving System')
-  expect((await plain.find({ type: 'Button', key: 'ask-expert-bar' }))?.text).toMatch(/Expert Advice: (On|Off)/)
+  expect((await plain.find({ type: 'Text', text: /Expert Advice:/ }))?.text).toContain('Expert Advice:')
+  expect(await plain.find({ type: 'Button', key: 'ask-expert-bar' })).toBeUndefined()
   await plain.unmount()
 })
 
-test('"N suggestions" opens the card with Apply and Dismiss right above the bar', async ($, on) => {
-  mock.store(on)
+test('a suggestion is a row above the bar with Add rule and Don\'t add; the bar line has no count button', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   engine(on, [])
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   // A suggestion waiting, as a real review would leave one.
   await $.command.run({ command: 'buildpartner:plugin', args: 'demo' } as never)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount(BAND(surface))
+    expect((await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' }))?.text).toBe('Add rule')
+    expect(await ui.find({ type: 'Button', key: 'review-suggestions' })).toBeUndefined()
+    await ui.unmount()
+  }
   const ui = await $.ui.mount(BAND('desktop'))
-  await ui.press({ key: 'welcome-ok' })
-  expect(await ui.find({ type: 'Button', key: `card-apply-demo-outline-item-count` })).toBeUndefined()
-  await ui.press({ key: 'review-suggestions' })
-  expect((await ui.find({ type: 'Button', key: `card-apply-demo-outline-item-count` }))?.text).toBe('Add rule')
-  expect((await ui.find({ type: 'Button', key: 'review-suggestions' }))?.text).toBe('Hide suggestions')
-  await ui.press({ key: 'review-suggestions' })
-  expect(await ui.find({ type: 'Button', key: `card-apply-demo-outline-item-count` })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^Suggested rule$/ }))?.text).toBe('Suggested rule')
+  expect((await ui.find({ type: 'Button', key: 'card-dismiss-demo-outline-item-count' }))?.text).toBe("Don't add")
+  // ▾ stays: the settings and the rows above do not fight over the screen.
+  expect(await ui.find({ type: 'Button', key: 'expand' })).toBeDefined()
+  await ui.press({ key: 'card-dismiss-demo-outline-item-count' })
+  expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('suggestions and the expanded settings never show together', async ($, on) => {
-  mock.store(on)
+test('a suggestion and a notice share one queue: 1 of 2, Next steps between them', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
-  engine(on, [])
+  engine(on, [NOTICE])
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'buildpartner:plugin', args: 'demo' } as never)
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
   const ui = await $.ui.mount(BAND('desktop'))
-  await ui.press({ key: 'welcome-ok' })
-  await ui.press({ key: 'review-suggestions' })
+  expect(await ui.find({ type: 'Text', text: /1 of 2/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeDefined()
-  // While they are open there is no ▾: Hide suggestions is the way out.
-  expect(await ui.find({ type: 'Button', key: 'expand' })).toBeUndefined()
-  await ui.press({ key: 'review-suggestions' })
+  expect(await ui.find({ type: 'Text', text: /New video from Austin/ })).toBeUndefined()
+  await ui.press({ key: 'row-next' })
+  expect(await ui.find({ type: 'Text', text: /New video from Austin/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeUndefined()
-  // Settings open: the suggestions button is hidden, so ▴ is the one way out.
-  await ui.press({ key: 'expand' })
-  expect(await ui.find({ type: 'Button', key: 'review-suggestions' })).toBeUndefined()
-  await ui.press({ key: 'expand' })
-  await ui.press({ key: 'review-suggestions' })
-  expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeDefined()
   await ui.unmount()
 })
