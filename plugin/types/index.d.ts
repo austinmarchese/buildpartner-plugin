@@ -127,13 +127,14 @@ declare module 'claude-code' {
       toolTip: Shaped<ToolTip | null>
       health: Shaped<BarHealth | null>
       scanned: boolean
+      scanDeclined: boolean
       plan: Shaped<MemberPlan | null>
       previewAs: string
       isScanning: boolean
       appliedNow: Shaped<string[]>
       notices: Shaped<TeamNotice[]>
       isWelcomed: boolean
-      noticeAt: number
+      rowAt: number
       isListOpen: boolean
       listAt: number
     }

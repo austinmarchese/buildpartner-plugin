@@ -70,6 +70,8 @@ const isListOpen = atom({ plugin: 'bp-dev', key: 'isListOpen' } as const, false)
 const listAt = atom({ plugin: 'bp-dev', key: 'listAt' } as const, 0)
 // The first-run look at past sessions has run (or been skipped) for this member.
 const scanned = atom({ plugin: 'bp-dev', key: 'scanned' } as const, false)
+// The member said Not now to reviewing past sessions: the offer stays out of the way (the expanded view keeps it).
+const scanDeclined = atom({ plugin: 'bp-dev', key: 'scanDeclined' } as const, true)
 // Lessons the member approved in this session: added to this session's instructions at once.
 // The first-run look is reading past sessions right now.
 const isScanning = atom({ plugin: 'bp-dev', key: 'isScanning' } as const, false)
@@ -82,8 +84,8 @@ const health = atom({ plugin: 'bp-dev', key: 'health' } as const, null as BarHea
 // Notifications from the BuildPartner.ai team the member has not dismissed, newest first.
 const notices = atom({ plugin: 'bp-dev', key: 'notices' } as const, [] as TeamNotice[], { shape: 'nt-1' })
 // The first-run welcome card was seen. True until the store says otherwise, so it never flashes.
-// Which of the team's notices shows, when there is more than one (Next steps through them).
-const noticeAt = atom({ plugin: 'bp-dev', key: 'noticeAt' } as const, 0)
+// Which row above the bar shows when more than one call to action waits (Next steps through them).
+const rowAt = atom({ plugin: 'bp-dev', key: 'rowAt' } as const, 0)
 const isWelcomed = atom({ plugin: 'bp-dev', key: 'isWelcomed' } as const, true)
 
 type Settings = typeof DEFAULTS
@@ -1264,19 +1266,146 @@ const WELCOME = {
 // The one first-run step: read the last few sessions in this project for fixes. Shown in the
 // welcome card first, then at the end of the bar until it has run once.
 const SCAN_LABEL = 'Review recent sessions'
-const SCAN_HELP = [
-  'Reads your recent Claude Code sessions in this project and suggests fixes for what Claude got wrong.',
-  'Nothing changes until you press Apply.',
-]
+const SCAN_HELP = ['Reads your recent Claude Code sessions in this project and suggests fixes for what Claude got wrong.']
 
 async function startFromWelcome($: Dollar): Promise<void> {
   await finishWelcome($, false)
   await scanPast($)
 }
 
-/** "From the BuildPartner.ai team" or "New video", then "· 1 of 2" when more than one waits. */
-function noticeHead(v: View): string {
-  return v.noticeCount > 1 ? ` · ${(v.noticeAt % v.noticeCount) + 1} of ${v.noticeCount}` : ''
+/** Not now, on the welcome card or the row above the bar: the review is still one press away under ▾. */
+async function declineScan($: Dollar): Promise<void> {
+  await attempt(() => $.store.set('scanDeclined', true), undefined)
+  await update($, scanDeclined, () => true)
+}
+
+/** The first-run step, offered right above the bar (the welcome card offers it first) until it has run or was declined. */
+function showScanRow(v: View): boolean {
+  return v.welcomed && v.enabled && v.selfOn && !v.scanned && !v.scanDeclined
+}
+
+// ---- The row above the bar ----
+//
+// Every call to action takes the same shape, right above the bar: an icon, a copper
+// header (and "1 of N" when more than one waits), the text, a primary button, a quiet
+// one, and Next. One shows at a time. Open suggestions take the row's place.
+
+type RowButton = { key: string; label: string; onPress: () => unknown }
+type Row = {
+  key: string
+  icon: 'sparkle' | 'bulb' | 'bell' | 'play'
+  header: string
+  text: string
+  primary?: RowButton
+  secondary?: RowButton
+  /** Set when the row is one of the team's notices, so it is reported seen once drawn. */
+  notice?: TeamNotice
+}
+
+/** What waits above the bar, most pressing first: the expert question, a tool tip, the first-run review, then the team's notices. */
+function rowsAbove($: Dollar, v: View): Row[] {
+  const rows: Row[] = []
+  const out = isOutOfRuns(v.plan)
+  if (v.ex && v.enabled && v.expertOn) {
+    rows.push({
+      key: 'coach-nudge',
+      icon: 'bulb',
+      header: 'Expert Advice',
+      text: `Before you decide on ${v.ex.topic ?? 'this'}, an expert framework could change the answer.`,
+      primary: { key: 'ask-expert-nudge', label: out ? 'See plans' : 'Ask the expert', onPress: () => askExpert($) },
+      secondary: { key: 'skip-expert', label: 'Not now', onPress: () => skipExpert($) },
+    })
+  }
+  // A tool tip shows only for a connected tool, with that tool's own prompt.
+  const tipTool = v.tip ? connectedTools(v).find(c => c.key === v.tip?.key) : undefined
+  if (v.tip && tipTool && v.enabled && v.expertOn) {
+    const copy = TIP_COPY[v.tip.key]
+    const prompt = tipTool.prompt
+    rows.push({
+      key: 'tool-tip',
+      icon: 'bulb',
+      header: tipTool.label,
+      text: copy.line,
+      primary: { key: 'use-tip', label: copy.button, onPress: () => useTip($, prompt) },
+      secondary: { key: 'skip-tip', label: 'Not now', onPress: () => skipTip($) },
+    })
+  }
+  if (v.scanning) {
+    rows.push({ key: 'scan-row', icon: 'sparkle', header: 'Self-Improving System', text: 'Reviewing your recent sessions…' })
+  } else if (showScanRow(v)) {
+    rows.push({
+      key: 'scan-row',
+      icon: 'sparkle',
+      header: 'Self-Improving System',
+      text: SCAN_HELP[0],
+      primary: { key: 'scan-past-bar', label: SCAN_LABEL, onPress: () => scanPast($) },
+      secondary: { key: 'skip-scan', label: 'Not now', onPress: () => declineScan($) },
+    })
+  }
+  for (const n of v.notices) {
+    rows.push({
+      key: `bp-notice-${n.id}`,
+      icon: n.kind === 'video' ? 'play' : 'bell',
+      header: n.kind === 'video' ? 'New video' : `From the ${NAME} team`,
+      text: n.message,
+      primary: n.linkLabel ? { key: `notice-open-${n.id}`, label: n.linkLabel, onPress: () => openNotice($, n) } : undefined,
+      secondary: { key: `notice-dismiss-${n.id}`, label: 'Dismiss', onPress: () => dismissNotice($, n.id) },
+      notice: n,
+    })
+  }
+  return rows
+}
+
+/** The row drawn now, or null: nothing while the welcome card or the suggestions are up. */
+function shownRow($: Dollar, v: View): (Row & { i: number; n: number }) | null {
+  if (!v.welcomed || (v.listOpen && v.list.length > 0)) return null
+  const rows = rowsAbove($, v)
+  if (rows.length === 0) return null
+  const i = v.rowAt % rows.length
+  return { ...rows[i], i, n: rows.length }
+}
+
+/** The row, drawn. Desktop gets the icon and wrapped text; the terminal gets a glyph and one cut line. */
+function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number; n: number }, room: number): JSX.Element {
+  const { Box, Text, Button } = D
+  const count = r.n > 1 ? ` · ${r.i + 1} of ${r.n}` : ''
+  const onNext = () => update($, rowAt, x => x + 1)
+  const next = r.n > 1 ? Svg ? <Button key="row-next" plain label="Next" onPress={onNext} /> : <Button key="row-next" label="Next" onPress={onNext} /> : ''
+  if (Svg) {
+    const icon = r.icon === 'sparkle' ? sparkle(LOGO_TINT) : r.icon === 'bulb' ? BULB : r.icon === 'play' ? PLAY : BELL
+    return (
+      <Box key={r.key} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
+        <Svg source={icon} alt="" width={16} height={16} />
+        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+          <Text wrap="wrap">
+            <Text bold color={LOGO_TINT}>
+              {r.header}
+            </Text>
+            <Text dimColor>{count}</Text>
+          </Text>
+          <Text bold wrap="wrap">
+            {r.text}
+          </Text>
+        </Box>
+        {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={r.primary.onPress} /> : ''}
+        {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={r.secondary.onPress} /> : ''}
+        {next}
+      </Box>
+    )
+  }
+  const buttons = (r.primary?.label.length ?? 0) + (r.secondary ? 6 : 0) + (r.n > 1 ? 7 : 0) + 8
+  return (
+    <Box key={r.key} flexDirection="row" gap={1}>
+      <Text color={CLAY}>{r.icon === 'play' ? '▶' : r.icon === 'sparkle' ? '✦' : '●'}</Text>
+      <Text>
+        {cut(r.text, Math.max(10, room - buttons - count.length))}
+        <Text dimColor>{count}</Text>
+      </Text>
+      {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={r.primary.onPress} /> : ''}
+      {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={r.secondary.onPress} /> : ''}
+      {next}
+    </Box>
+  )
 }
 
 /** What sits right above the bar: the welcome card on first run, else the team's newest notice. Desktop. */
@@ -1299,34 +1428,13 @@ function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Elemen
         ) : (
           <Box flexDirection="row" columnGap={1}>
             <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={() => startFromWelcome($)} />
-            <Button key="welcome-ok" plain label="Not now" onPress={() => finishWelcome($, false)} />
+            <Button key="welcome-ok" plain label="Not now" onPress={() => Promise.all([finishWelcome($, false), declineScan($)])} />
           </Box>
         )}
       </Box>
     )
   }
-  const n = v.notice
-  if (!n) return ''
-  // The same shape as a suggestion row: what it is (and 1 of 2), the message, then its buttons.
-  return (
-    <Box key={`bp-notice-${n.id}`} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
-      <Svg source={n.kind === 'video' ? PLAY : BELL} alt="" width={16} height={16} />
-      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-        <Text wrap="wrap">
-          <Text bold color={LOGO_TINT}>
-            {n.kind === 'video' ? 'New video' : `From the ${NAME} team`}
-          </Text>
-          <Text dimColor>{noticeHead(v)}</Text>
-        </Text>
-        <Text bold wrap="wrap">
-          {n.message}
-        </Text>
-      </Box>
-      {n.linkLabel ? <Button key={`notice-open-${n.id}`} label={n.linkLabel} variant="primary" onPress={() => openNotice($, n)} /> : ''}
-      <Button key={`notice-dismiss-${n.id}`} plain label="Dismiss" onPress={() => dismissNotice($, n.id)} />
-      {v.noticeCount > 1 ? <Button key="notice-next" plain label="Next" onPress={() => update($, noticeAt, x => x + 1)} /> : ''}
-    </Box>
-  )
+  return ''
 }
 
 /** The same, in words, for the terminal. */
@@ -1348,28 +1456,13 @@ function topCardPlain($: Dollar, D: Elements, v: View): JSX.Element | '' {
         ) : (
           <Box flexDirection="row" gap={1}>
             <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={() => startFromWelcome($)} />
-            <Button key="welcome-ok" label="Not now" onPress={() => finishWelcome($, false)} />
+            <Button key="welcome-ok" label="Not now" onPress={() => Promise.all([finishWelcome($, false), declineScan($)])} />
           </Box>
         )}
       </Box>
     )
   }
-  const n = v.notice
-  if (!n) return ''
-  const head = noticeHead(v)
-  const room = Math.max(10, v.room - (n.linkLabel ? n.linkLabel.length + 12 : 8) - head.length - (v.noticeCount > 1 ? 7 : 0))
-  return (
-    <Box key={`bp-notice-${n.id}`} flexDirection="row" gap={1}>
-      <Text color={CLAY}>{n.kind === 'video' ? '▶' : '●'}</Text>
-      <Text>
-        {cut(n.message, room)}
-        <Text dimColor>{head}</Text>
-      </Text>
-      {n.linkLabel ? <Button key={`notice-open-${n.id}`} label={n.linkLabel} variant="primary" onPress={() => openNotice($, n)} /> : ''}
-      <Button key={`notice-dismiss-${n.id}`} label="✕" onPress={() => dismissNotice($, n.id)} />
-      {v.noticeCount > 1 ? <Button key="notice-next" label="Next" onPress={() => update($, noticeAt, x => x + 1)} /> : ''}
-    </Box>
-  )
+  return ''
 }
 
 type View = {
@@ -1396,14 +1489,15 @@ type View = {
   /** The member's plan; null until read. */
   plan: MemberPlan | null
   /** The newest notification from the team not dismissed yet. */
-  notice: TeamNotice | null
-  /** How many of the team's notices wait, and which one shows (Next). */
-  noticeCount: number
-  noticeAt: number
+  /** The team's notices not yet dismissed, newest first. */
+  notices: TeamNotice[]
+  /** Which row above the bar shows when more than one waits. */
+  rowAt: number
   /** The first-run welcome card was seen. */
   welcomed: boolean
   /** The first-run look at past sessions has run. */
   scanned: boolean
+  scanDeclined: boolean
   /** Reading past sessions now. */
   scanning: boolean
   health: BarHealth | null
@@ -1498,6 +1592,8 @@ export const register: Register = on => {
       await update($, scanned, () => false)
       const wasScanned = (await $.store.get('scanned')) === true
       await update($, scanned, () => wasScanned)
+      const wasDeclined = (await $.store.get('scanDeclined')) === true
+      await update($, scanDeclined, () => wasDeclined)
       await update($, appliedNow, () => [])
       await update($, busySince, () => 0)
       const wasWelcomed = (await $.store.get('welcomed')) === true
@@ -1667,12 +1763,10 @@ export const register: Register = on => {
           tools: await attempt(() => read($, bpTools), [] as string[]),
           off: await attempt(() => read($, hiddenAtom), [] as string[]),
           scanned: await attempt(() => read($, scanned), true),
+          scanDeclined: await attempt(() => read($, scanDeclined), true),
           plan: await attempt(() => read($, plan), null),
-          ...(await attempt(async () => {
-            const all = await read($, notices)
-            const at = await read($, noticeAt)
-            return { notice: all.length ? all[at % all.length] : null, noticeCount: all.length, noticeAt: at }
-          }, { notice: null as TeamNotice | null, noticeCount: 0, noticeAt: 0 })),
+          notices: await attempt(() => read($, notices), [] as TeamNotice[]),
+          rowAt: await attempt(() => read($, rowAt), 0),
           welcomed: await attempt(() => read($, isWelcomed), true),
           scanning: await attempt(() => read($, isScanning), false),
           health: await attempt(() => read($, health), null),
@@ -1684,10 +1778,11 @@ export const register: Register = on => {
           room: Math.max(20, e.props.bodyColumns - 2),
           rows: e.props.maxRows,
         }
-        // The welcome card sits in the notice's place, so a notice is seen only once it is drawn.
-        if (v.welcomed) noteSeen($, v.notice)
         const pv = v.dev ? await attempt(() => read($, previewAs), '') : ''
         const shown = withPreview({ ...v, preview: pv }, pv)
+        // A notice counts as seen only once it is the row drawn (the welcome card and suggestions take its place).
+        const drawn = shownRow($, shown)
+        if (drawn?.notice) noteSeen($, drawn.notice)
         const toggle = async () => {
           const open = await update($, isExpanded, x => !x)
           // One panel at a time: the settings close the suggestions, and the other way round (toggleList).
@@ -1812,6 +1907,8 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
     if (verb === 'welcome') {
       await attempt(() => $.store.set('welcomed', false), undefined)
       await update($, isWelcomed, () => false)
+      await attempt(() => $.store.set('scanDeclined', false), undefined)
+      await update($, scanDeclined, () => false)
       return { text: `${NAME}: the welcome card is back above the bar.` }
     }
     if (verb === 'notices') {
@@ -1955,7 +2052,7 @@ function withPreview(v: View, key: string): View {
     case 'exec':
       return { ...v, plan: plan('Executive', true, null, true) }
     case 'new':
-      return { ...v, watch: [], list: [], ex: null, run: null, scanned: false, scanning: false }
+      return { ...v, watch: [], list: [], ex: null, run: null, scanned: false, scanDeclined: false, scanning: false }
     case 'suggestions':
       return { ...v, list: [{ ...DEMO, lastSeen: now }, { ...DEMO, id: 'demo-skill', type: 'skill_fix', target: '.claude/skills/weekly-report/SKILL.md', change: 'Add a step: pull last week numbers before drafting.', lastSeen: now }] }
     case 'expert':
@@ -1967,9 +2064,16 @@ function withPreview(v: View, key: string): View {
     case 'welcome':
       return { ...v, welcomed: false }
     case 'notice':
-      return { ...v, welcomed: true, noticeCount: 2, noticeAt: 0, notice: { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' } }
+      return {
+        ...v,
+        welcomed: true,
+        notices: [
+          { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' },
+          { id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' },
+        ],
+      }
     case 'video':
-      return { ...v, welcomed: true, notice: { id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' } }
+      return { ...v, welcomed: true, notices: [{ id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' }] }
     default:
       return v
   }
@@ -2076,7 +2180,7 @@ function details($: Dollar, D: Elements, v: View) {
           row('self-row', 'Self-Improving', v.selfOn ? selfLine : 'Suggests skills to create or improve from how you work.', toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))),
           v.selfOn && (!v.scanned || v.scanning) ? (
             <Box key="self-scan" flexDirection="row">
-              <Button key="scan-past" label={v.scanning ? 'Reading past sessions…' : `Learn from my last ${PAST_SESSIONS} sessions`} onPress={() => (v.scanning ? undefined : scanPast($))} />
+              <Button key="scan-past" label={v.scanning ? 'Reviewing recent sessions…' : SCAN_LABEL} onPress={() => (v.scanning ? undefined : scanPast($))} />
             </Box>
           ) : (
             ''
@@ -2292,12 +2396,11 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const top = v.list[0]
   // A hover card in the app's own colors (as the original mod draws them): no forced ink.
   // Kept to two or three short lines: the surface shows it the moment the pointer lands, with no delay to set.
-  const card = (title: string, lines: string[], side: 'left' | 'right' = 'left') => (
+  const card = (title: string, lines: string[]) => (
     <Box
       position="absolute"
       bottom={1}
-      left={side === 'left' ? 0 : undefined}
-      right={side === 'right' ? 0 : undefined}
+      left={0}
       display="none"
       hover={{ display: 'flex' }}
       flexDirection="column"
@@ -2315,8 +2418,6 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   )
 
   const state = selfState(v)
-  // The first-run step sits at the end of the bar, once the welcome card (which offers it first) is gone.
-  const showScan = v.welcomed && v.selfOn && (v.scanning || (!v.scanned && v.enabled && v.watch.length + v.list.length === 0))
   const self = (
     <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
       {/* Same shape as Expert Advice: the icon tight to "Name: On", the On/Off in its status color. A Button's padding pushed the icon away, so the name is plain text. */}
@@ -2368,40 +2469,13 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
       ''
     )
 
-  // A tool tip shows only for a connected tool, with that tool's own prompt.
-  const tipTool = v.tip ? connectedTools(v).find(c => c.key === v.tip?.key) : undefined
-  const tip = v.tip && tipTool ? { key: v.tip.key, prompt: tipTool.prompt } : null
-  // The nudge: one decision worth an expert, said as a sentence right above the bar.
-  const nudge =
-    v.ex && v.enabled && v.expertOn ? (
-      <Box key="coach-nudge" flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
-        <Svg source={BULB} alt="" width={16} height={16} />
-        <Box flexGrow={1} flexShrink={1}>
-          <Text wrap="wrap">
-            Before you decide on <Text bold>{v.ex.topic ?? 'this'}</Text>, an expert framework could change the answer.
-          </Text>
-        </Box>
-        <Button key="ask-expert-nudge" label={out ? 'See plans' : 'Ask the expert'} variant="primary" onPress={() => askExpert($)} />
-        <Button key="skip-expert" plain label="Not now" onPress={() => skipExpert($)} />
-      </Box>
-    ) : tip && v.enabled && v.expertOn ? (
-      <Box key="tool-tip" flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
-        <Svg source={BULB} alt="" width={16} height={16} />
-        <Box flexGrow={1} flexShrink={1}>
-          <Text wrap="wrap">{TIP_COPY[tip.key].line}</Text>
-        </Box>
-        <Button key="use-tip" label={TIP_COPY[tip.key].button} variant="primary" onPress={() => useTip($, tip.prompt)} />
-        <Button key="skip-tip" plain label="Not now" onPress={() => skipTip($)} />
-      </Box>
-    ) : (
-      ''
-    )
+  const row = shownRow($, v)
 
   return (
     <Box key="bp-band" flexDirection="column" paddingX={1} rowGap={1}>
       {v.listOpen && v.list.length > 0 ? suggestionRows($, D, v.list, true, v.listAt) : ''}
       {topCardDesktop($, D, v, Svg)}
-      {nudge}
+      {row ? drawRow($, D, Svg, row, v.room) : ''}
       <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2} rowGap={1}>
         <Box flexDirection="row" alignItems="center" columnGap="xs" flexShrink={0}>
           <Svg source={LOGO} alt="BuildPartner.ai" width={20} height={20} />
@@ -2411,18 +2485,6 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         {v.off.includes('self') ? '' : self}
         {v.off.includes('expert') ? '' : expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
-          {showScan ? (
-            <Box key="scan-past" position="relative" flexDirection="row" alignItems="center" flexShrink={0}>
-              {v.scanning ? (
-                <Text dimColor>Reviewing recent sessions…</Text>
-              ) : (
-                <Button key="scan-past-bar" label={SCAN_LABEL} variant="primary" onPress={() => scanPast($)} />
-              )}
-              {card(SCAN_LABEL, SCAN_HELP, 'right')}
-            </Box>
-          ) : (
-            ''
-          )}
           {out ? <Button key="upgrade-bar" label="Upgrade" variant="primary" onPress={() => upgrade($)} /> : ''}
           {middle}
           {/* While suggestions are open, "Hide suggestions" is the only way out: no ▾. */}
@@ -2447,8 +2509,7 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const state = selfState(v)
   const ex = expertState(v)
   const out = isOutOfRuns(v.plan)
-  const plainTool = v.tip ? connectedTools(v).find(c => c.key === v.tip?.key) : undefined
-  const plainTip = v.tip && plainTool ? { key: v.tip.key, prompt: plainTool.prompt } : null
+  const row = shownRow($, v)
   // Under 70 columns the long names would fold the line, so the short ones stand in.
   const short = v.room < 70
   // The "checked 3m ago" time lives in the expanded view: here it only pushed the line past 80 columns.
@@ -2480,18 +2541,8 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
             onPress={() => toggleList($)}
           />
         </Box>
-      ) : v.ex && v.enabled && v.expertOn && !v.open ? (
-        <Box flexDirection="row" gap={1}>
-          <Text>{cut(`Before you decide on ${v.ex.topic ?? 'this'}, ask an expert`, Math.max(10, v.room - 30))}</Text>
-          <Button key="ask-expert" label="Ask an expert" variant="primary" onPress={() => askExpert($)} />
-          <Button key="skip-expert" label="✕" onPress={() => skipExpert($)} />
-        </Box>
-      ) : plainTip && v.enabled && v.expertOn && !v.open ? (
-        <Box flexDirection="row" gap={1}>
-          <Text>{cut(TIP_COPY[plainTip.key].line, Math.max(10, v.room - 30))}</Text>
-          <Button key="use-tip" label={TIP_COPY[plainTip.key].button} variant="primary" onPress={() => useTip($, plainTip.prompt)} />
-          <Button key="skip-tip" label="✕" onPress={() => skipTip($)} />
-        </Box>
+      ) : row && !v.open ? (
+        drawRow($, D, null, row, v.room)
       ) : out && !v.open ? (
         <Box flexDirection="row" gap={1}>
           <Text dimColor>Free runs used up</Text>

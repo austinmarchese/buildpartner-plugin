@@ -50,7 +50,8 @@ test('a new member sees the welcome card once, and Not now puts it away', async 
 })
 
 test('a notice from the team shows above the bar until dismissed', async ($, on) => {
-  mock.store(on, { welcomed: true })
+  // The review of past sessions is done, so the team's notices are the only rows waiting.
+  mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   const events: string[] = []
   const clock = engine(on, [NOTICE], events)
@@ -77,7 +78,7 @@ test('a notice from the team shows above the bar until dismissed', async ($, on)
 })
 
 test('two notices show one at a time, 1 of 2, and Next steps to the other', async ($, on) => {
-  mock.store(on, { welcomed: true })
+  mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   const second = { id: 'n2', kind: 'message', message: 'Office hours are Thursday', link_label: null, link_href: null }
   engine(on, [NOTICE, second])
@@ -86,7 +87,7 @@ test('two notices show one at a time, 1 of 2, and Next steps to the other', asyn
   const ui = await $.ui.mount(BAND('desktop'))
   expect(await ui.find({ type: 'Text', text: /1 of 2/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /New video from Austin/ })).toBeDefined()
-  await ui.press({ key: 'notice-next' })
+  await ui.press({ key: 'row-next' })
   expect(await ui.find({ type: 'Text', text: /Office hours are Thursday/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /2 of 2/ })).toBeDefined()
   await ui.unmount()
