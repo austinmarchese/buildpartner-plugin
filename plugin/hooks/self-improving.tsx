@@ -23,7 +23,7 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { ReviewCursor, ExpertFlag, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun } from '../types'
+import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun } from '../types'
 
 type Dollar = EngineInterface
 
@@ -52,6 +52,8 @@ const cursor = atom({ plugin: 'bp-dev', key: 'cursor' } as const, null as Review
 const lastReviewAt = atom({ plugin: 'bp-dev', key: 'lastReviewAt' } as const, 0)
 const last = atom({ plugin: 'bp-dev', key: 'last' } as const, null as ReflectRun | null, { shape: 'r-1' })
 const expert = atom({ plugin: 'bp-dev', key: 'expert' } as const, null as ExpertFlag | null, { shape: 'e-1' })
+// A BuildPartner.ai tool this session could use instead of what it is doing (Expert Advice's tool tip).
+const toolTip = atom({ plugin: 'bp-dev', key: 'toolTip' } as const, null as ToolTip | null, { shape: 'tt-1' })
 // Bumped on the minute so "ago" figures redraw.
 const tick = atom({ plugin: 'bp-dev', key: 'tick' } as const, 0)
 // The BuildPartner.ai tools connected in this session, as `key:plugin` (see BP_TOOLS).
@@ -779,6 +781,76 @@ async function askExpert($: Dollar): Promise<void> {
   }
 }
 
+// ---- Tool tips (part of Expert Advice) ----
+//
+// Watches which of Claude's own tools this session calls, and suggests the
+// BuildPartner.ai tool that does the job better: lots of web fetching or
+// searching (Web Research), reading X, Instagram or YouTube (Social Intel), or
+// a plan just written (BuildPad). Tool names and URL hosts only, never what was
+// fetched. At most one tip a week per tool, never while the expert nudge shows,
+// never for a tool this session already used or the member's plan can't run.
+
+const TIP_COPY: Record<ToolTip['key'], { line: string; button: string }> = {
+  web: { line: "You're doing a lot of web research. BuildPartner.ai Web Research reads any page, including ones that block bots.", button: 'Try Web Research' },
+  social: { line: 'Reading X, Instagram or YouTube? Social Intel gets the posts, stats, comments and transcripts.', button: 'Try Social Intel' },
+  pad: { line: 'Turn this plan into a page you and your team can comment on.', button: 'Make a BuildPad' },
+}
+const TIP_WEB_CALLS = 3
+const TIP_EVERY_MS = 7 * 86_400_000
+const SOCIAL_HOST = /(^|\.)(x\.com|twitter\.com|instagram\.com|youtube\.com|youtu\.be)$/i
+// This session's counts (a reload starts them over, which only delays a tip).
+let webCalls = 0
+const usedTools = new Set<string>()
+
+function hostOf(raw: unknown): string {
+  try {
+    return new URL(String(raw ?? '')).hostname
+  } catch {
+    return ''
+  }
+}
+
+/** Counts a tool call and raises a tip when one is due. Never blocks the call. */
+async function noteToolUse($: Dollar, tool: string, input: unknown): Promise<void> {
+  const ours = BP_TOOLS.find(b => tool.endsWith(`_tools__${b.tool}`))
+  if (ours) {
+    usedTools.add(ours.key)
+    return
+  }
+  const i = (input ?? {}) as { url?: unknown }
+  let due: ToolTip['key'] | null = null
+  if (tool === 'WebFetch' && SOCIAL_HOST.test(hostOf(i.url))) due = 'social'
+  else if (tool === 'WebFetch' || tool === 'WebSearch') due = ++webCalls >= TIP_WEB_CALLS ? 'web' : null
+  else if (tool === 'ExitPlanMode') due = 'pad'
+  if (due) await offerTip($, due)
+}
+
+async function offerTip($: Dollar, key: ToolTip['key']): Promise<void> {
+  if (usedTools.has(key)) return
+  const s = await settings($)
+  if (!s.expertOn || !(await attempt(() => read($, isEnabled), true))) return
+  if (!(await attempt(() => read($, bpTools), [] as string[])).some(t => t.startsWith(`${key}:`))) return
+  if (isOutOfRuns(await attempt(() => read($, plan), null))) return
+  if ((await attempt(() => read($, toolTip), null)) || (await attempt(() => read($, expert), null))) return
+  const now = await $.clock.now()
+  const shown = ((await attempt(() => $.store.get('toolTipsShown'), undefined)) ?? {}) as Record<string, number>
+  if (typeof shown[key] === 'number' && now - shown[key] < TIP_EVERY_MS) return
+  await attempt(() => $.store.set('toolTipsShown', { ...shown, [key]: now }), undefined)
+  await update($, toolTip, () => ({ key, at: now }))
+}
+
+/** Not now: drops the tip (it comes back for this tool in a week at the soonest), and ends the dev preview of it. */
+async function skipTip($: Dollar): Promise<void> {
+  await update($, toolTip, () => null)
+  if ((await attempt(() => read($, previewAs), '')) === 'tip') await update($, previewAs, () => '')
+}
+
+/** Try it: puts the tool's prompt at the front of the draft, as its button under Additional tools does. */
+async function useTip($: Dollar, prompt: string): Promise<void> {
+  await skipTip($)
+  await creditTool($, () => handOver($, prompt, 'prepend'))
+}
+
 // ---- Health, dashboard, usage ping ----
 
 /** When BuildPartner.ai and the member's skills last changed, plus the facts the debug card shows. */
@@ -906,18 +978,32 @@ function noteSeen($: Dollar, n: TeamNotice | null): void {
   $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_seen', n.id), undefined))
 }
 
-async function dismissNotice($: Dollar, id: string): Promise<void> {
-  $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_dismissed', id), undefined))
+/** Hides a notice for good on this machine (every window: see syncDismissed). `report` false when a click hid it, so Admin > Mod counts it as clicked, not dismissed. */
+async function dismissNotice($: Dollar, id: string, report = true): Promise<void> {
+  if (report) $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_dismissed', id), undefined))
   const kept = (await dismissedNotices($)).filter(x => x !== id)
   await attempt(() => $.store.set('dismissedNotices', [id, ...kept].slice(0, DISMISSED_KEEP)), undefined)
   await update($, notices, list => list.filter(n => n.id !== id))
 }
 
-/** The notice's button: opens its link, and the notice stays until dismissed. */
+/** The notice's button: opens its link and puts the notice away, since the member acted on it. */
 async function openNotice($: Dollar, n: TeamNotice): Promise<void> {
   if (!n.linkHref) return
   $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_clicked', n.id), undefined))
-  if (!(await openUrl($, n.linkHref))) $.ui.toast(`${NAME}: could not open a browser. The link is ${n.linkHref}`)
+  if (!(await openUrl($, n.linkHref))) {
+    // Nothing opened: keep the notice so the link is still there to use.
+    $.ui.toast(`${NAME}: could not open a browser. The link is ${n.linkHref}`)
+    return
+  }
+  await dismissNotice($, n.id, false)
+}
+
+/** A notice dismissed in another window (the store is shared on this machine) leaves this one too. */
+async function syncDismissed($: Dollar): Promise<void> {
+  const shown = await attempt(() => read($, notices), [] as TeamNotice[])
+  if (shown.length === 0) return
+  const gone = new Set(await dismissedNotices($))
+  if (shown.some(n => gone.has(n.id))) await update($, notices, list => list.filter(n => !gone.has(n.id)))
 }
 
 // ---- First run ----
@@ -1098,7 +1184,7 @@ function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Elemen
   const { Box, Text, Button } = D
   if (!v.welcomed) {
     return (
-      <Box key="bp-welcome" flexDirection="column" borderStyle="round" borderColor={CLAY} paddingX={1} rowGap={1}>
+      <Box key="bp-welcome" flexDirection="column" borderStyle="round" borderColor={LOGO_TINT} paddingX={1} rowGap={1}>
         <Box flexDirection="row" alignItems="center" columnGap={1}>
           <Svg source={LOGO} alt="BuildPartner.ai" width={18} height={18} />
           <Text bold>{WELCOME.title}</Text>
@@ -1116,7 +1202,7 @@ function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Elemen
   const n = v.notice
   if (!n) return ''
   return (
-    <Box key={`bp-notice-${n.id}`} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={CLAY} paddingX={1}>
+    <Box key={`bp-notice-${n.id}`} flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
       <Svg source={n.kind === 'video' ? PLAY : BELL} alt="" width={16} height={16} />
       <Box flexGrow={1} flexShrink={1}>
         <Text wrap="wrap">{n.message}</Text>
@@ -1168,6 +1254,7 @@ type View = {
   watch: ReflectPattern[]
   run: ReflectRun | null
   ex: ExpertFlag | null
+  tip: ToolTip | null
   /** The two halves of the bar, each with its own switch. */
   selfOn: boolean
   expertOn: boolean
@@ -1321,6 +1408,10 @@ export const register: Register = on => {
     $.clock.after(0, () => void attempt(() => refreshPlan($), undefined))
     // The team's notices: read at start, then every 12 hours in a session that stays open.
     $.clock.after(0, () => void attempt(() => refreshNotices($), undefined))
+    // Dismiss in one window, gone from the others within seconds (a local read, only while a notice shows).
+    $.clock.every(10_000, () => {
+      if (active) void attempt(() => syncDismissed($), undefined)
+    })
     let minutes = 0
     $.clock.every(60_000, () => {
       if (!active) return
@@ -1379,7 +1470,11 @@ export const register: Register = on => {
   // error of its own get in the way: anything not ours goes straight to next.
   on('tool.call', async ($, e, next) => {
     const ours = e.tool === `mcp__${$.plugin.name}__resolve_suggestion` || e.tool === `mcp__${$.plugin.name}__review_now`
-    if (!ours) return next(e)
+    if (!ours) {
+      const call = e as unknown as { tool: string; input: unknown }
+      $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call.input), undefined))
+      return next(e)
+    }
     try {
       return await ownTool($, e as unknown as { tool: string; input: unknown })
     } catch {
@@ -1429,6 +1524,7 @@ export const register: Register = on => {
           watch: await attempt(() => read($, watching), [] as ReflectPattern[]),
           run: await attempt(() => read($, last), null),
           ex: await attempt(() => read($, expert), null),
+          tip: await attempt(() => read($, toolTip), null),
           ...(await attempt(async () => {
             const st = await settings($)
             return { selfOn: st.selfOn, expertOn: st.expertOn }
@@ -1693,6 +1789,7 @@ const PREVIEWS: readonly { key: string; label: string }[] = [
   { key: 'new', label: 'New member' },
   { key: 'suggestions', label: 'Suggestions waiting' },
   { key: 'expert', label: 'Expert question' },
+  { key: 'tip', label: 'Tool tip (Web Research)' },
   { key: 'signedout', label: 'Not signed in' },
   { key: 'welcome', label: 'First run (welcome card)' },
   { key: 'notice', label: 'Notification from the team' },
@@ -1720,6 +1817,8 @@ function withPreview(v: View, key: string): View {
       return { ...v, list: [{ ...DEMO, lastSeen: now }, { ...DEMO, id: 'demo-skill', type: 'skill_fix', target: '.claude/skills/weekly-report/SKILL.md', change: 'Add a step: pull last week numbers before drafting.', lastSeen: now }] }
     case 'expert':
       return { ...v, list: [], ex: { category: 'sales', topic: 'Starter tier pricing', question: 'Should the starter offer be $49 a month or $490 a year?', at: now } }
+    case 'tip':
+      return { ...v, list: [], ex: null, tip: { key: 'web', at: now }, tools: v.tools.some(t => t.startsWith('web:')) ? v.tools : [...v.tools, 'web:bp-dev'] }
     case 'signedout':
       return { ...v, health: { ...health, isSignedIn: false } }
     case 'welcome':
@@ -1986,7 +2085,7 @@ function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], picture
   const { Box, Text, Button } = D
   const Svg = pictures ? svgOf(D) : null
   return (
-    <Box key="bp-suggestions" flexDirection="column" borderStyle="round" borderColor={CLAY} paddingX={2} paddingY={1} rowGap={1}>
+    <Box key="bp-suggestions" flexDirection="column" borderStyle="round" borderColor={LOGO_TINT} paddingX={2} paddingY={1} rowGap={1}>
       <Box flexDirection="row" alignItems="center" columnGap={1}>
         {Svg ? <Svg source={LOGO} alt="BuildPartner.ai" width={18} height={18} /> : ''}
         <Text bold>BuildPartner.ai</Text>
@@ -2120,10 +2219,13 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
       ''
     )
 
+  // A tool tip shows only for a connected tool, with that tool's own prompt.
+  const tipTool = v.tip ? connectedTools(v).find(c => c.key === v.tip?.key) : undefined
+  const tip = v.tip && tipTool ? { key: v.tip.key, prompt: tipTool.prompt } : null
   // The nudge: one decision worth an expert, said as a sentence right above the bar.
   const nudge =
     v.ex && v.enabled && v.expertOn ? (
-      <Box key="coach-nudge" flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={CLAY} paddingX={1}>
+      <Box key="coach-nudge" flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
         <Svg source={BULB} alt="" width={16} height={16} />
         <Box flexGrow={1} flexShrink={1}>
           <Text wrap="wrap">
@@ -2132,6 +2234,15 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         </Box>
         <Button key="ask-expert-nudge" label={out ? 'See plans' : 'Ask the expert'} variant="primary" onPress={() => askExpert($)} />
         <Button key="skip-expert" plain label="Not now" onPress={() => skipExpert($)} />
+      </Box>
+    ) : tip && v.enabled && v.expertOn ? (
+      <Box key="tool-tip" flexDirection="row" alignItems="center" columnGap={2} borderStyle="round" borderColor={LOGO_TINT} paddingX={1}>
+        <Svg source={BULB} alt="" width={16} height={16} />
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="wrap">{TIP_COPY[tip.key].line}</Text>
+        </Box>
+        <Button key="use-tip" label={TIP_COPY[tip.key].button} variant="primary" onPress={() => useTip($, tip.prompt)} />
+        <Button key="skip-tip" plain label="Not now" onPress={() => skipTip($)} />
       </Box>
     ) : (
       ''
@@ -2169,6 +2280,8 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const state = selfState(v)
   const ex = expertState(v)
   const out = isOutOfRuns(v.plan)
+  const plainTool = v.tip ? connectedTools(v).find(c => c.key === v.tip?.key) : undefined
+  const plainTip = v.tip && plainTool ? { key: v.tip.key, prompt: plainTool.prompt } : null
   // Under 70 columns the long names would fold the line, so the short ones stand in.
   const short = v.room < 70
   // The "checked 3m ago" time lives in the expanded view: here it only pushed the line past 80 columns.
@@ -2202,6 +2315,12 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
           <Text>{cut(`Before you decide on ${v.ex.topic ?? 'this'}, ask an expert`, Math.max(10, v.room - 30))}</Text>
           <Button key="ask-expert" label="Ask an expert" variant="primary" onPress={() => askExpert($)} />
           <Button key="skip-expert" label="✕" onPress={() => skipExpert($)} />
+        </Box>
+      ) : plainTip && v.enabled && v.expertOn && !v.open ? (
+        <Box flexDirection="row" gap={1}>
+          <Text>{cut(TIP_COPY[plainTip.key].line, Math.max(10, v.room - 30))}</Text>
+          <Button key="use-tip" label={TIP_COPY[plainTip.key].button} variant="primary" onPress={() => useTip($, plainTip.prompt)} />
+          <Button key="skip-tip" label="✕" onPress={() => skipTip($)} />
         </Box>
       ) : out && !v.open ? (
         <Box flexDirection="row" gap={1}>

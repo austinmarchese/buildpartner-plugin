@@ -34,6 +34,12 @@ export type ReviewCursor = {
   upTo: number
 }
 
+/** A BuildPartner.ai tool worth suggesting, from how this session uses Claude's own tools (BP_TOOLS key). */
+export type ToolTip = {
+  key: 'web' | 'social' | 'pad'
+  at: number
+}
+
 export type ExpertFlag = {
   category: string
   question: string
@@ -118,6 +124,7 @@ declare module 'claude-code' {
       bpTools: Shaped<string[]>
       hiddenItems: Shaped<string[]>
       expert: Shaped<ExpertFlag | null>
+      toolTip: Shaped<ToolTip | null>
       health: Shaped<BarHealth | null>
       scanned: boolean
       plan: Shaped<MemberPlan | null>
