@@ -1806,7 +1806,7 @@ export const register: Register = on => {
       }, undefined),
     )
     $.clock.after(0, () => void attempt(() => refreshPlan($), undefined))
-    // The team's notices: read at start, then every 12 hours in a session that stays open.
+    // The team's notices: read at start, then every hour in a session that stays open.
     $.clock.after(0, () => void attempt(() => refreshNotices($), undefined))
     // Dismiss in one window, gone from the others within seconds (a local read, only while a notice shows).
     $.clock.every(10_000, () => {
@@ -1817,11 +1817,10 @@ export const register: Register = on => {
       if (!active) return
       void attempt(() => update($, tick, n => n + 1), 0)
       minutes += 1
-      // A long-lived session catches up on the plan and the team's notices every 12 hours.
-      if (minutes % (12 * 60) === 0) {
-        void attempt(() => refreshPlan($), undefined)
-        void attempt(() => refreshNotices($), undefined)
-      }
+      // A long-lived session catches up on the team's notices every hour, so a new one
+      // shows within the hour, and on the plan every 12 hours.
+      if (minutes % 60 === 0) void attempt(() => refreshNotices($), undefined)
+      if (minutes % (12 * 60) === 0) void attempt(() => refreshPlan($), undefined)
     })
     return done
   })
