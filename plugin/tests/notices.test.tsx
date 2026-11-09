@@ -93,7 +93,7 @@ test('two notices show one at a time, 1 of 2, and Next steps to the other', asyn
   await ui.unmount()
 })
 
-test('the first-run review is a row above the bar: Not now puts it away, Review runs it', async ($, on) => {
+test('the first-run review is a row above the bar, and Not now puts it away for good', async ($, on) => {
   mock.store(on, { welcomed: true })
   mock.env(on, { HOME: '/home/m' })
   engine(on, [])
@@ -126,16 +126,48 @@ test('Reset first run brings back the welcome card and the review offer', async 
   await ui.unmount()
 })
 
-test('Review recent sessions runs the review and the row says so', async ($, on) => {
+test('Review recent sessions is a prompt: the click fills the box, and sending it runs the review', async ($, on) => {
   mock.store(on, { welcomed: true })
   mock.env(on, { HOME: '/home/m' })
   engine(on, [])
   on('fs.list', () => ({ value: [] }))
+  const filled: string[] = []
+  on('prompt.fill', (_, e) => {
+    filled.push(e.text)
+    return { isFilled: true, text: e.text, cursor: e.text.length }
+  })
+  on('ui.toast', () => ({ value: undefined }))
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'scan-past-bar' })
-  // No past sessions in the mock: the review ends at once and the offer is gone for good.
-  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  // Nothing ran in the background: the command waits in the prompt and the offer is still there.
+  expect(filled).toEqual([`/${PLUGIN}:plugin scan`])
+  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeDefined()
+  await ui.unmount()
+  // The member presses Enter: the review runs and answers in the chat. No past sessions in the mock, so the offer is done.
+  const out = (await $.command.run({ command: 'buildpartner:plugin', args: 'scan' } as never)) as { text?: string }
+  expect(out.text ?? '').toContain('No past sessions')
+  const after = await $.ui.mount(BAND('desktop'))
+  expect(await after.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  await after.unmount()
+})
+
+test('Review this session now is a prompt too, and closes the settings', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [])
+  const filled: string[] = []
+  on('prompt.fill', (_, e) => {
+    filled.push(e.text)
+    return { isFilled: true, text: e.text, cursor: e.text.length }
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount(BAND('desktop'))
+  await ui.press({ key: 'expand' })
+  await ui.press({ key: 'now' })
+  expect(filled).toEqual([`/${PLUGIN}:plugin now`])
+  expect(await ui.find({ type: 'Button', key: 'now' })).toBeUndefined()
   await ui.unmount()
 })
 

@@ -85,11 +85,16 @@ test('test state "first-run": the welcome card for real, then both ways through 
   await state($, 'first-run')
   const ui = await $.ui.mount(BAND('desktop'))
   expect(await ui.find({ type: 'Text', text: /Welcome to BuildPartner\.ai/ })).toBeDefined()
-  // Review recent sessions: the card closes and, with no past sessions, the offer is done.
+  // Review recent sessions (a prompt): the card closes and the offer waits above the bar until the member sends it.
   await ui.press({ key: 'welcome-scan' })
   expect(await ui.find({ type: 'Text', text: /Welcome to BuildPartner\.ai/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'scan-past-bar' })).toBeDefined()
   await ui.unmount()
+  // Sent: with no past sessions the review ends at once and the offer is done.
+  await $.command.run({ command: 'buildpartner:plugin', args: 'scan' } as never)
+  const ran = await $.ui.mount(BAND('desktop'))
+  expect(await ran.find({ type: 'Button', key: 'scan-past-bar' })).toBeUndefined()
+  await ran.unmount()
   // Again, the other way: Not now closes the card and leaves no row behind.
   await state($, 'first-run')
   const again = await $.ui.mount(BAND('desktop'))

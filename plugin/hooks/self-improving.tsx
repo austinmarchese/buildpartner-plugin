@@ -664,6 +664,7 @@ async function apply($: Dollar, id: string): Promise<void> {
   if (draft.includes(HANDOFF_HEAD) && !isOpen) return
   const ok = isOpen ? await handOver($, `\n${handoffLine(p)}`, 'append') : await handOver($, `${HANDOFF_HEAD}\n${handoffLine(p)}`)
   if (ok) {
+    $.ui.toast(`${NAME}: it is in your prompt. Press Enter to run it.`)
     await setStatus($, id, 'applied')
     // The member said yes: it holds in this session now, before any file is edited.
     await update($, appliedNow, list => (list.includes(p.change) ? list : [...list, p.change].slice(-20)))
@@ -1262,9 +1263,15 @@ async function startFromWelcome($: Dollar): Promise<void> {
   await runScan($)
 }
 
-/** The first-run review from a button: says what it found, since nothing else on screen does. */
+/** The first-run review from a button (prompt): the member sends it, and what it found shows in the chat. */
 async function runScan($: Dollar): Promise<void> {
-  $.ui.toast(`${NAME}: ${await scanPast($)}`)
+  await promptCommand($, 'scan')
+}
+
+/** Review this session now (prompt): the same, for the conversation in front of them. */
+async function runReview($: Dollar): Promise<void> {
+  await update($, isExpanded, () => false)
+  await promptCommand($, 'now')
 }
 
 /** Puts this machine back to a new member's first run: the welcome card, then the review offer. Debug and /plugin welcome. */
@@ -1281,11 +1288,39 @@ async function resetFirstRun($: Dollar): Promise<void> {
   await update($, isExpanded, () => false)
 }
 
+// ---- How the bar handles things: the one structure everything follows ----
+//
+// PASSIVE: nothing was clicked. It runs by itself while a feature is on (the check after a
+// few turns or a correction, the expert flag, a tool tip, the team's notices). All a passive
+// run ever does is add a row above the bar (rowsAbove). It never writes in the chat, never
+// starts a Claude reply, never opens anything.
+//
+// ACTIVE: a click. Every button declares one of three kinds, and its kind is the whole of
+// what the member sees happen:
+//   'prompt'  Claude (or a bar command) has work to do. The prompt box fills, the member
+//             presses Enter, and the work and its result show in the chat.
+//   'open'    A web page opens in the browser.
+//   'bar'     The bar itself changes where they clicked: a row goes away, a switch flips,
+//             the settings open.
+// No button does work silently in the background: that is what made a click look broken.
+//
+// Every onPress in this file is click($, kind, label, fn). A test holds that
+// (apps/web/lib/__tests__/mod-notices.test.ts), and the style guide lists every button by
+// kind (.claude/skills/buildpartner-design, Part 7, "How the bar handles things").
+type Kind = 'prompt' | 'open' | 'bar'
+
+/** Puts a bar command in the prompt for the member to send: its answer shows in the chat, with no Claude reply. */
+async function promptCommand($: Dollar, verb: string): Promise<boolean> {
+  const ok = await handOver($, `/${$.plugin.name}:plugin ${verb}`)
+  if (ok) $.ui.toast(`${NAME}: it is in your prompt. Press Enter to run it.`)
+  return ok
+}
+
 /**
- * Every button above the bar runs through here. A failure is never silent: it shows a toast and
- * lands in Debug as Last error.
+ * Every button runs through here, with its kind. A failure is never silent: it shows a toast
+ * and lands in Debug as Last error.
  */
-function press($: Dollar, label: string, fn: () => unknown): () => Promise<void> {
+function click($: Dollar, _kind: Kind, label: string, fn: () => unknown): () => Promise<void> {
   return async () => {
     try {
       await fn()
@@ -1394,7 +1429,7 @@ async function setTestState($: Dollar, key: string): Promise<string> {
 // (a suggestion, the expert question, a tool tip, the first-run review, an upgrade, a
 // notice) is one of these rows; the bar line itself holds no button but ▾.
 
-type RowButton = { key: string; label: string; onPress: () => unknown }
+type RowButton = { key: string; label: string; kind: Kind; onPress: () => unknown }
 type Row = {
   key: string
   icon: 'sparkle' | 'bulb' | 'bell' | 'play'
@@ -1420,8 +1455,8 @@ function rowsAbove($: Dollar, v: View): Row[] {
       icon: 'bulb',
       header: 'Expert Advice',
       text: `Before you decide on ${v.ex.topic ?? 'this'}, an expert framework could change the answer.`,
-      primary: { key: 'ask-expert-nudge', label: out ? 'See plans' : 'Ask the expert', onPress: () => askExpert($) },
-      secondary: { key: 'skip-expert', label: 'Not now', onPress: () => skipExpert($) },
+      primary: { key: 'ask-expert-nudge', label: out ? 'See plans' : 'Ask the expert', kind: out ? 'open' : 'prompt', onPress: () => askExpert($) },
+      secondary: { key: 'skip-expert', label: 'Not now', kind: 'bar', onPress: () => skipExpert($) },
     })
   }
   // A tool tip shows only for a connected tool, with that tool's own prompt.
@@ -1434,8 +1469,8 @@ function rowsAbove($: Dollar, v: View): Row[] {
       icon: 'bulb',
       header: tipTool.label,
       text: copy.line,
-      primary: { key: 'use-tip', label: copy.button, onPress: () => useTip($, prompt) },
-      secondary: { key: 'skip-tip', label: 'Not now', onPress: () => skipTip($) },
+      primary: { key: 'use-tip', label: copy.button, kind: 'prompt', onPress: () => useTip($, prompt) },
+      secondary: { key: 'skip-tip', label: 'Not now', kind: 'bar', onPress: () => skipTip($) },
     })
   }
   // Each suggestion is its own row: what kind and where, the change, why, Add rule and Don't add.
@@ -1448,8 +1483,8 @@ function rowsAbove($: Dollar, v: View): Row[] {
       context: targetLabel(p.target),
       text: changeText(p.change),
       sub: `${p.corrections ? 'From your correction' : `Came up in ${p.sessions.length} sessions`}: "${cut(p.evidence, 120)}"`,
-      primary: { key: `card-apply-${p.id}`, label: kind.action, onPress: () => apply($, p.id) },
-      secondary: { key: `card-dismiss-${p.id}`, label: kind.decline, onPress: () => dismiss($, p.id) },
+      primary: { key: `card-apply-${p.id}`, label: kind.action, kind: 'prompt', onPress: () => apply($, p.id) },
+      secondary: { key: `card-dismiss-${p.id}`, label: kind.decline, kind: 'bar', onPress: () => dismiss($, p.id) },
     })
   }
   if (v.scanning) {
@@ -1460,8 +1495,8 @@ function rowsAbove($: Dollar, v: View): Row[] {
       icon: 'sparkle',
       header: 'Self-Improving System',
       text: SCAN_HELP[0],
-      primary: { key: 'scan-past-bar', label: SCAN_LABEL, onPress: () => runScan($) },
-      secondary: { key: 'skip-scan', label: 'Not now', onPress: () => declineScan($) },
+      primary: { key: 'scan-past-bar', label: SCAN_LABEL, kind: 'prompt', onPress: () => runScan($) },
+      secondary: { key: 'skip-scan', label: 'Not now', kind: 'bar', onPress: () => declineScan($) },
     })
   }
   if (out && !v.upgradeSkipped) {
@@ -1470,8 +1505,8 @@ function rowsAbove($: Dollar, v: View): Row[] {
       icon: 'bulb',
       header: 'Free runs used up',
       text: 'Upgrade to keep using Expert Advice and the tools.',
-      primary: { key: 'upgrade-bar', label: 'See plans', onPress: () => upgrade($) },
-      secondary: { key: 'skip-upgrade', label: 'Not now', onPress: () => update($, upgradeSkipped, () => true) },
+      primary: { key: 'upgrade-bar', label: 'See plans', kind: 'open', onPress: () => upgrade($) },
+      secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => update($, upgradeSkipped, () => true) },
     })
   }
   for (const n of v.notices) {
@@ -1480,8 +1515,8 @@ function rowsAbove($: Dollar, v: View): Row[] {
       icon: n.kind === 'video' ? 'play' : 'bell',
       header: n.kind === 'video' ? 'New video' : `From the ${NAME} team`,
       text: n.message,
-      primary: n.linkLabel ? { key: `notice-open-${n.id}`, label: n.linkLabel, onPress: () => openNotice($, n) } : undefined,
-      secondary: { key: `notice-dismiss-${n.id}`, label: 'Dismiss', onPress: () => dismissNotice($, n.id) },
+      primary: n.linkLabel ? { key: `notice-open-${n.id}`, label: n.linkLabel, kind: 'open', onPress: () => openNotice($, n) } : undefined,
+      secondary: { key: `notice-dismiss-${n.id}`, label: 'Dismiss', kind: 'bar', onPress: () => dismissNotice($, n.id) },
       notice: n,
     })
   }
@@ -1501,7 +1536,7 @@ function shownRow($: Dollar, v: View): (Row & { i: number; n: number }) | null {
 function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number; n: number }, room: number): JSX.Element {
   const { Box, Text, Button } = D
   const count = r.n > 1 ? ` · ${r.i + 1} of ${r.n}` : ''
-  const onNext = () => update($, rowAt, x => x + 1)
+  const onNext = click($, 'bar', 'Next', () => update($, rowAt, x => x + 1))
   const next = r.n > 1 ? Svg ? <Button key="row-next" plain label="Next" onPress={onNext} /> : <Button key="row-next" label="Next" onPress={onNext} /> : ''
   if (Svg) {
     const icon = r.icon === 'sparkle' ? sparkle(LOGO_TINT) : r.icon === 'bulb' ? BULB : r.icon === 'play' ? PLAY : BELL
@@ -1529,8 +1564,8 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
             ''
           )}
         </Box>
-        {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={press($, r.primary.label, r.primary.onPress)} /> : ''}
-        {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={press($, r.secondary.label, r.secondary.onPress)} /> : ''}
+        {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.label, r.primary.onPress)} /> : ''}
+        {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={click($, r.secondary.kind, r.secondary.label, r.secondary.onPress)} /> : ''}
         {next}
       </Box>
     )
@@ -1543,8 +1578,8 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
         {cut(r.text, Math.max(10, room - buttons - count.length))}
         <Text dimColor>{count}</Text>
       </Text>
-      {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={press($, r.primary.label, r.primary.onPress)} /> : ''}
-      {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={press($, r.secondary.label, r.secondary.onPress)} /> : ''}
+      {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.label, r.primary.onPress)} /> : ''}
+      {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={click($, r.secondary.kind, r.secondary.label, r.secondary.onPress)} /> : ''}
       {next}
     </Box>
   )
@@ -1565,12 +1600,12 @@ function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Elemen
         ))}
         {v.scanned ? (
           <Box flexDirection="row" columnGap={1}>
-            <Button key="welcome-ok" label="Got it" variant="primary" onPress={press($, 'Got it', () => finishWelcome($, false))} />
+            <Button key="welcome-ok" label="Got it" variant="primary" onPress={click($, 'bar', 'Got it', () => finishWelcome($, false))} />
           </Box>
         ) : (
           <Box flexDirection="row" columnGap={1}>
-            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={press($, SCAN_LABEL, () => startFromWelcome($))} />
-            <Button key="welcome-ok" plain label="Not now" onPress={press($, 'Not now', () => Promise.all([finishWelcome($, false), declineScan($)]))} />
+            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={click($, 'prompt', SCAN_LABEL, () => startFromWelcome($))} />
+            <Button key="welcome-ok" plain label="Not now" onPress={click($, 'bar', 'Not now', () => Promise.all([finishWelcome($, false), declineScan($)]))} />
           </Box>
         )}
       </Box>
@@ -1593,12 +1628,12 @@ function topCardPlain($: Dollar, D: Elements, v: View): JSX.Element | '' {
         ))}
         {v.scanned ? (
           <Box flexDirection="row" gap={1}>
-            <Button key="welcome-ok" label="Got it" variant="primary" onPress={press($, 'Got it', () => finishWelcome($, false))} />
+            <Button key="welcome-ok" label="Got it" variant="primary" onPress={click($, 'bar', 'Got it', () => finishWelcome($, false))} />
           </Box>
         ) : (
           <Box flexDirection="row" gap={1}>
-            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={press($, SCAN_LABEL, () => startFromWelcome($))} />
-            <Button key="welcome-ok" label="Not now" onPress={press($, 'Not now', () => Promise.all([finishWelcome($, false), declineScan($)]))} />
+            <Button key="welcome-scan" label={SCAN_LABEL} variant="primary" onPress={click($, 'prompt', SCAN_LABEL, () => startFromWelcome($))} />
+            <Button key="welcome-ok" label="Not now" onPress={click($, 'bar', 'Not now', () => Promise.all([finishWelcome($, false), declineScan($)]))} />
           </Box>
         )}
       </Box>
@@ -2283,7 +2318,7 @@ function details($: Dollar, D: Elements, v: View) {
   )
   // A Button holds only text, so a switch is drawn in glyphs: knob right and green when on.
   const toggle = (key: string, on: boolean, press: () => unknown) => (
-    <Button key={key} plain onPress={press}>
+    <Button key={key} plain onPress={click($, 'bar', key, press)}>
       {on ? <Text color={GOOD}>━━●</Text> : <Text dimColor>●━━</Text>} <Text bold={on} dimColor={!on}>{on ? 'On' : 'Off'}</Text>
     </Button>
   )
@@ -2304,7 +2339,7 @@ function details($: Dollar, D: Elements, v: View) {
           row('self-row', 'Self-Improving', v.selfOn ? selfLine : 'Suggests skills to create or improve from how you work.', toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))),
           v.selfOn && (!v.scanned || v.scanning) ? (
             <Box key="self-scan" flexDirection="row">
-              <Button key="scan-past" label={v.scanning ? 'Reviewing recent sessions…' : SCAN_LABEL} onPress={() => (v.scanning ? undefined : runScan($))} />
+              <Button key="scan-past" label={v.scanning ? 'Reviewing recent sessions…' : SCAN_LABEL} onPress={click($, 'prompt', SCAN_LABEL, () => (v.scanning ? undefined : runScan($)))} />
             </Box>
           ) : (
             ''
@@ -2321,10 +2356,7 @@ function details($: Dollar, D: Elements, v: View) {
                 key="now"
                 label={v.busy && !v.scanning ? 'Reviewing this session…' : 'Review this session now'}
                 variant="primary"
-                onPress={async () => {
-                  await update($, isExpanded, () => false)
-                  await review($, 'asked')
-                }}
+                onPress={click($, 'prompt', 'Review this session now', () => runReview($))}
               />
             </Box>
           ) : (
@@ -2332,17 +2364,17 @@ function details($: Dollar, D: Elements, v: View) {
           ),
         ])}
         {section('d-tools', 'Additional tools', out ? 'free runs used up' : 'each starts a prompt with the tool', [
-          v.plan?.hasCoach ? row('tool-coach', 'Message Coach', `Opens your coach chat on ${NAME}.`, <Button key="message-coach" label="Open" onPress={() => messageCoach($)} />) : '',
+          v.plan?.hasCoach ? row('tool-coach', 'Message Coach', `Opens your coach chat on ${NAME}.`, <Button key="message-coach" label="Open" onPress={click($, 'open', 'Message Coach', () => messageCoach($))} />) : '',
           ...BP_TOOLS.map(t => {
             // connectedTools fills in the plugin that serves the tool (bp-dev or buildpartner).
             const live = connectedTools(v).find(c => c.key === t.key)
             return live
-              ? row(`tool-${t.key}`, t.label, t.hint, <Button key={`tool-btn-${t.key}`} label="Use" onPress={() => creditTool($, () => handOver($, live.prompt, 'prepend'))} />)
+              ? row(`tool-${t.key}`, t.label, t.hint, <Button key={`tool-btn-${t.key}`} label="Use" onPress={click($, 'prompt', t.label, () => creditTool($, () => handOver($, live.prompt, 'prepend')))} />)
               : row(`tool-${t.key}`, t.label, 'Not connected in this session.', desktop && Svg ? <Svg source={dot(MUTED)} alt="Not connected" width={10} height={10} /> : <Text color={MUTED}>●</Text>)
           }),
           out ? (
             <Box key="tool-upgrade" flexDirection="row">
-              <Button key="upgrade-tools" label="Upgrade" variant="primary" onPress={() => upgrade($)} />
+              <Button key="upgrade-tools" label="Upgrade" variant="primary" onPress={click($, 'open', 'Upgrade', () => upgrade($))} />
             </Box>
           ) : (
             ''
@@ -2354,14 +2386,14 @@ function details($: Dollar, D: Elements, v: View) {
           ),
           customizeGroups(v).some(g => g.upgrade) ? (
             <Box key="custom-upgrade" flexDirection="row">
-              <Button key="up-custom" plain label="See plans" onPress={() => upgrade($)} />
+              <Button key="up-custom" plain label="See plans" onPress={click($, 'open', 'See plans', () => upgrade($))} />
             </Box>
           ) : (
             ''
           ),
           <Box key="custom-footer" flexDirection="row" flexWrap="wrap" columnGap={2}>
-            <Button key="dashboard" plain label="Open dashboard" onPress={() => openDashboard($)} />
-            <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai bar'} onPress={() => turnOffMod($)} />
+            <Button key="dashboard" plain label="Open dashboard" onPress={click($, 'open', 'Open dashboard', () => openDashboard($))} />
+            <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai bar'} onPress={click($, 'bar', 'Hide the bar', () => turnOffMod($))} />
           </Box>,
         ])}
         {v.dev
@@ -2376,7 +2408,7 @@ function details($: Dollar, D: Elements, v: View) {
               row('dbg-test', 'Test a state', 'Puts the bar in that state for real on this machine, so every button works. Clear test states undoes it.', ''),
               <Box key="dbg-tests" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
                 {TEST_STATES.map(t => (
-                  <Button key={`ts-${t.key}`} label={t.label} onPress={press($, t.label, async () => $.ui.toast(`${NAME}: ${await setTestState($, t.key)}`))} />
+                  <Button key={`ts-${t.key}`} label={t.label} onPress={click($, 'bar', t.label, async () => $.ui.toast(`${NAME}: ${await setTestState($, t.key)}`))} />
                 ))}
               </Box>,
               row(
@@ -2391,7 +2423,7 @@ function details($: Dollar, D: Elements, v: View) {
                     key={`pv-${pr.key || 'real'}`}
                     label={pr.label}
                     variant={(v.preview ?? '') === pr.key ? 'primary' : undefined}
-                    onPress={() => update($, previewAs, () => pr.key)}
+                    onPress={click($, 'bar', pr.label, () => update($, previewAs, () => pr.key))}
                   />
                 ))}
               </Box>,
@@ -2452,14 +2484,14 @@ function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], picture
             {why(p)}. You said: "{p.evidence}"
           </Text>
           <Box flexDirection="row" columnGap={1} marginTop={1}>
-            <Button key={`card-apply-${p.id}`} label="Apply" variant="primary" onPress={() => apply($, p.id)} />
-            <Button key={`card-dismiss-${p.id}`} label="Dismiss" onPress={() => dismiss($, p.id)} />
+            <Button key={`card-apply-${p.id}`} label="Apply" variant="primary" onPress={click($, 'prompt', 'Apply', () => apply($, p.id))} />
+            <Button key={`card-dismiss-${p.id}`} label="Dismiss" onPress={click($, 'bar', 'Dismiss', () => dismiss($, p.id))} />
             {p.type === 'instruction' && (p.target === 'CLAUDE.md' || p.target === GLOBAL_CLAUDE_MD) ? (
               <Button
                 key={`card-scope-${p.id}`}
                 plain
                 label={p.target === GLOBAL_CLAUDE_MD ? 'Just this project instead' : 'All my projects instead'}
-                onPress={() => switchScope($, p.id)}
+                onPress={click($, 'bar', 'Change where the rule goes', () => switchScope($, p.id))}
               />
             ) : (
               ''
@@ -2469,7 +2501,7 @@ function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], picture
       ))}
       {list.length > 1 ? (
         <Box flexDirection="row" alignItems="center" columnGap={1}>
-          <Button key="card-walk" label="Walk me through them" variant="primary" onPress={() => walkThrough($)} />
+          <Button key="card-walk" label="Walk me through them" variant="primary" onPress={click($, 'prompt', 'Walk me through them', () => walkThrough($))} />
           <Text dimColor>Claude asks about each one in the chat, with the list attached.</Text>
         </Box>
       ) : (
@@ -2560,7 +2592,7 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         {v.off.includes('self') ? '' : self}
         {v.off.includes('expert') ? '' : expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
-          <Button key="expand" plain onPress={toggle}>
+          <Button key="expand" plain onPress={click($, 'bar', 'Settings', toggle)}>
             <Text bold>{v.open ? '▴' : '▾'}</Text>
           </Button>
         </Box>
@@ -2583,7 +2615,7 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
     <Box flexDirection="column">
       {topCardPlain($, D, v)}
       <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-        <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={toggle} />
+        <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={click($, 'bar', 'Settings', toggle)} />
         <Text>
           <Text bold>{NAME}</Text>
           <Text dimColor> · {short ? 'Self-Improving' : 'Self-Improving System'}: </Text>
