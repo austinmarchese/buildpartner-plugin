@@ -30,7 +30,7 @@ type Dollar = EngineInterface
 const SESSIONS_BAR = 3
 // Most suggestions waiting at once: a short list the member actually goes through.
 const MAX_WAITING = 3
-const DEFAULTS = { enabled: true, hidden: false, every: 15, model: 'opus', selfOn: true, expertOn: true, barItemsOff: ['founder'] as string[] }
+const DEFAULTS = { enabled: true, hidden: false, every: 15, model: 'opus', selfOn: true, expertOn: true }
 const MIN_GAP_MS = 60_000
 const SLICE_MESSAGES = 200
 const SLICE_CHARS = 14_000
@@ -60,8 +60,6 @@ const toolTip = atom({ plugin: 'bp-dev', key: 'toolTip' } as const, null as Tool
 const tick = atom({ plugin: 'bp-dev', key: 'tick' } as const, 0)
 // The BuildPartner.ai tools connected in this session, as `key:plugin` (see BP_TOOLS).
 const bpTools = atom({ plugin: 'bp-dev', key: 'bpTools' } as const, [] as string[], { shape: 'bt-2' })
-// Items the member hid from the bar (BAR_ITEMS keys).
-const hiddenAtom = atom({ plugin: 'bp-dev', key: 'hiddenItems' } as const, ['founder'] as string[], { shape: 'hi-2' })
 const isHidden = atom({ plugin: 'bp-dev', key: 'isHidden' } as const, false)
 const isExpanded = atom({ plugin: 'bp-dev', key: 'isExpanded' } as const, false)
 // The member said Not now to the upgrade row this session: it stays out of the way (the expanded view keeps it).
@@ -664,7 +662,6 @@ async function apply($: Dollar, id: string): Promise<void> {
   if (draft.includes(HANDOFF_HEAD) && !isOpen) return
   const ok = isOpen ? await handOver($, `\n${handoffLine(p)}`, 'append') : await handOver($, `${HANDOFF_HEAD}\n${handoffLine(p)}`)
   if (ok) {
-    $.ui.toast(`${NAME}: it is in your prompt. Press Enter to run it.`)
     await setStatus($, id, 'applied')
     // The member said yes: it holds in this session now, before any file is edited.
     await update($, appliedNow, list => (list.includes(p.change) ? list : [...list, p.change].slice(-20)))
@@ -696,7 +693,6 @@ async function remember($: Dollar, raw: string): Promise<void> {
     status: 'suggested',
   }
   await saveLedger($, map)
-  $.ui.toast(`${NAME}: added to your suggestions. It shows above the bar.`)
 }
 
 /** Switches an instruction between this project's CLAUDE.md and the one for all projects. */
@@ -760,7 +756,10 @@ async function readPast($: Dollar): Promise<string> {
     read_ += 1
   }
   const ready = (await attempt(() => read($, pending), [] as ReflectPattern[])).length
-  return `Read ${read_} past session${read_ === 1 ? '' : 's'}: ${ready} suggestion${ready === 1 ? '' : 's'} ready.`
+  const sessions = `Read ${read_} past session${read_ === 1 ? '' : 's'}`
+  // Nothing found is a result too: say so, and where the next suggestion will show.
+  if (ready === 0) return `${sessions}. Nothing to fix. New suggestions show above the bar as you work.`
+  return `${sessions}: ${ready} suggestion${ready === 1 ? '' : 's'} ready.`
 }
 
 async function dismiss($: Dollar, id: string): Promise<void> {
@@ -775,19 +774,6 @@ const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: strin
   { key: 'web', tool: 'web_research', label: 'Web Research', hint: "Search the web and read any page, even ones Claude can't.", prompt: '/{p}:web-research ', more: '/dashboard/web' },
   { key: 'founder', tool: 'get_founder_knowledge', label: 'Founder Knowledge', hint: 'Ask how your founder would handle it.', prompt: '/{p}-team:ask-founder ', more: '/dashboard/team' },
 ]
-
-/** What the one-line bar shows, for the Show in the bar toggles. The tools sit under Additional tools in the expanded view. */
-const BAR_ITEMS: readonly { key: string; label: string }[] = [
-  { key: 'self', label: 'Self-Improving System' },
-  { key: 'expert', label: 'Expert Advice' },
-]
-
-async function toggleItem($: Dollar, key: string): Promise<void> {
-  const s = await settings($)
-  const off = s.barItemsOff.includes(key) ? s.barItemsOff.filter(k => k !== key) : [...s.barItemsOff, key]
-  await saveSettings($, { barItemsOff: off })
-  await update($, hiddenAtom, () => off)
-}
 
 async function findBpTools($: Dollar): Promise<void> {
   const names = (await attempt(() => $.tool.list(), [])).map(t => t.name)
@@ -1088,9 +1074,6 @@ async function finishWelcome($: Dollar, showSettings: boolean): Promise<void> {
   if (showSettings) await update($, isExpanded, () => true)
 }
 
-// The bar items that spend BuildPartner.ai credits on the free plan.
-const CREDIT_ITEMS = ['expert', 'pad', 'social', 'web']
-
 /** Free plan with no credits left: credit tools lead to the upgrade page instead of a prompt that would fail. */
 function isOutOfRuns(pl: MemberPlan | null): boolean {
   return !!pl && !pl.paid && pl.creditsLeft !== null && pl.creditsLeft <= 0
@@ -1297,6 +1280,9 @@ async function resetFirstRun($: Dollar): Promise<void> {
 // What each feature does, in its row under ▼ (nothing explains itself on hover).
 const SELF_LINE = "When you correct Claude, it suggests a fix so it doesn't happen again."
 const EXPERT_LINE = 'Advice from proven business experts for your key decisions.'
+// Under Settings, beside each switch: what On does.
+const SELF_ON_LINE = 'Checks automatically as you work with Claude.'
+const EXPERT_ON_LINE = 'Suggests an expert when you face a key decision.'
 
 /** Learn more (open): the page on BuildPartner.ai that explains a feature or tool. */
 async function learnMore($: Dollar, path: string): Promise<void> {
@@ -1326,9 +1312,7 @@ type Kind = 'prompt' | 'open' | 'bar'
 
 /** Puts a bar command in the prompt for the member to send: its answer shows in the chat, with no Claude reply. */
 async function promptCommand($: Dollar, verb: string): Promise<boolean> {
-  const ok = await handOver($, `/${$.plugin.name}:plugin ${verb}`)
-  if (ok) $.ui.toast(`${NAME}: it is in your prompt. Press Enter to run it.`)
-  return ok
+  return handOver($, `/${$.plugin.name}:plugin ${verb}`)
 }
 
 /**
@@ -1677,8 +1661,6 @@ type View = {
   expertOn: boolean
   /** BuildPartner.ai tools connected now. */
   tools: string[]
-  /** Bar items the member hid. */
-  off: string[]
   /** Dev builds only: the preview state drawn, '' for the real one. */
   preview?: string
   /** The member's plan; null until read. */
@@ -1783,7 +1765,6 @@ export const register: Register = on => {
       const s = await settings($)
       await update($, isEnabled, () => s.enabled)
       await update($, isHidden, () => s.hidden)
-      await update($, hiddenAtom, () => s.barItemsOff)
       await update($, scanned, () => false)
       const wasScanned = (await $.store.get('scanned')) === true
       await update($, scanned, () => wasScanned)
@@ -1956,7 +1937,6 @@ export const register: Register = on => {
             return { selfOn: st.selfOn, expertOn: st.expertOn }
           }, { selfOn: true, expertOn: true })),
           tools: await attempt(() => read($, bpTools), [] as string[]),
-          off: await attempt(() => read($, hiddenAtom), [] as string[]),
           scanned: await attempt(() => read($, scanned), true),
           scanDeclined: await attempt(() => read($, scanDeclined), true),
           plan: await attempt(() => read($, plan), null),
@@ -2289,25 +2269,6 @@ function connectedTools(v: View) {
   })
 }
 
-/**
- * The Show in the bar list, split by what each item costs. A paid plan sees one
- * group. Plan-only items (coach, founder knowledge) show only to members who have them.
- */
-function customizeGroups(v: View): { title: string; items: { key: string; label: string }[]; upgrade: boolean }[] {
-  const has = (key: string) => (key === 'coach' ? !!v.plan?.hasCoach : key === 'founder' ? v.tools.some(t => t.startsWith('founder:')) : true)
-  const items = BAR_ITEMS.filter(i => has(i.key))
-  if (!v.plan || v.plan.paid) return [{ title: v.plan ? `Included with ${v.plan.name}` : 'Show in the bar', items, upgrade: false }]
-  const left = v.plan.creditsLeft
-  return [
-    { title: 'Included', items: items.filter(i => !CREDIT_ITEMS.includes(i.key)), upgrade: false },
-    {
-      title: left !== null && left <= 0 ? 'Uses credits · free runs used up' : `Uses credits${left !== null ? ` · ${left} left` : ''}`,
-      items: items.filter(i => CREDIT_ITEMS.includes(i.key)),
-      upgrade: left !== null && left <= 0,
-    },
-  ]
-}
-
 /** The cards under the bar, as the original mod lays them out: Self-Improving and Customize, plus Health, and Debug in dev builds. */
 function details($: Dollar, D: Elements, v: View) {
   const { Box, Text, Button } = D
@@ -2353,15 +2314,14 @@ function details($: Dollar, D: Elements, v: View) {
     <Box flexDirection="column" rowGap={1} marginTop={1}>
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
         {section('d-self', 'Features', status, [
-          // Each feature reads like a tool: what it is on the left; then its switch, its button and Learn more, in that order.
+          // Each feature reads like a tool: what it is on the left; then its button and Learn more. Its switch is under Settings.
           // The button is the full skill run by Claude in the chat, more than the automatic check.
           row(
             'self-row',
             'Self-Improving System',
             SELF_LINE,
             <Box key="self-controls" flexDirection="row" alignItems="center" columnGap={2}>
-              {toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))}
-              <Button key="use-self" label="Review my setup" onPress={click($, 'prompt', 'Review my setup', () => useSelf($))} />
+              <Button key="use-self" label="Full setup review" onPress={click($, 'prompt', 'Full setup review', () => useSelf($))} />
               {more('self', 'Self-Improving System', '/dashboard/builds/self-improving-system')}
             </Box>,
           ),
@@ -2370,7 +2330,6 @@ function details($: Dollar, D: Elements, v: View) {
             'Expert Advice',
             EXPERT_LINE,
             <Box key="expert-controls" flexDirection="row" alignItems="center" columnGap={2}>
-              {toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true }))}
               <Button key="use-expert" label="Ask an expert" onPress={click($, isOutOfRuns(v.plan) ? 'open' : 'prompt', 'Ask an expert', () => useExpert($))} />
               {more('expert', 'Expert Advice', '/dashboard/expert-advice')}
             </Box>,
@@ -2404,18 +2363,11 @@ function details($: Dollar, D: Elements, v: View) {
             ''
           ),
         ])}
-        {section('d-custom', 'Show in the bar', '', [
-          ...customizeGroups(v).flatMap(g =>
-            g.items.map(item => row(`show-row-${item.key}`, item.label, '', toggle(`show-${item.key}`, !v.off.includes(item.key), () => toggleItem($, item.key)))),
-          ),
-          customizeGroups(v).some(g => g.upgrade) ? (
-            <Box key="custom-upgrade" flexDirection="row">
-              <Button key="up-custom" plain label="See plans" onPress={click($, 'open', 'See plans', () => upgrade($))} />
-            </Box>
-          ) : (
-            ''
-          ),
-          <Box key="custom-footer" flexDirection="row" flexWrap="wrap" columnGap={2}>
+        {section('d-settings', 'Settings', '', [
+          // On means it runs by itself: the line says so, because flipping a switch starts nothing the member can see.
+          row('set-self', 'Self-Improving System', SELF_ON_LINE, toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))),
+          row('set-expert', 'Expert Advice', EXPERT_ON_LINE, toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true }))),
+          <Box key="settings-footer" flexDirection="row" flexWrap="wrap" columnGap={2}>
             <Button key="dashboard" plain label="Open dashboard" onPress={click($, 'open', 'Open dashboard', () => openDashboard($))} />
             <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai bar'} onPress={click($, 'bar', 'Hide the bar', () => turnOffMod($))} />
           </Box>,
@@ -2574,8 +2526,8 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
           <Text bold>{NAME}</Text>
           {v.tag ? <Text color={CAUTION}>{v.tag}</Text> : ''}
         </Box>
-        {v.off.includes('self') ? '' : self}
-        {v.off.includes('expert') ? '' : expertItem}
+        {self}
+        {expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
           <Button key="expand" plain onPress={click($, 'bar', 'Settings', toggle)}>
             <Text bold>{v.open ? '▲' : '▼'}</Text>

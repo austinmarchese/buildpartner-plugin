@@ -122,7 +122,6 @@ declare module 'claude-code' {
       isExpanded: boolean
       tick: number
       bpTools: Shaped<string[]>
-      hiddenItems: Shaped<string[]>
       expert: Shaped<ExpertFlag | null>
       toolTip: Shaped<ToolTip | null>
       health: Shaped<BarHealth | null>

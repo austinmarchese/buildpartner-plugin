@@ -152,7 +152,21 @@ test('Review recent sessions is a prompt: the click fills the box, and sending i
   await after.unmount()
 })
 
-test('each feature has Use beside its switch: a prompt for the full skill, and no loose button under the rows', async ($, on) => {
+test('a review that finds nothing says so, and where the next suggestion shows', async ($, on) => {
+  mock.store(on, { welcomed: true })
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [])
+  // One past session on disk with nothing in it to fix.
+  on('fs.list', () => ({ value: [{ name: 'a.jsonl', kind: 'file', size: 10, mtimeMs: 1 }] }))
+  on('session.cwd', () => ({ value: '/p' }))
+  on('session.id', () => ({ value: 'live' }))
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  const out = (await $.command.run({ command: 'buildpartner:plugin', args: 'scan' } as never)) as { text?: string }
+  expect(out.text ?? '').toContain('Nothing to fix. New suggestions show above the bar as you work.')
+  expect(out.text ?? '').not.toContain('0 suggestions')
+})
+
+test('each feature has its button in Features and its switch under Settings, with what On does', async ($, on) => {
   mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   engine(on, [])
@@ -166,7 +180,7 @@ test('each feature has Use beside its switch: a prompt for the full skill, and n
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'expand' })
-  expect((await ui.find({ type: 'Button', key: 'use-self' }))?.text).toBe('Review my setup')
+  expect((await ui.find({ type: 'Button', key: 'use-self' }))?.text).toBe('Full setup review')
   expect((await ui.find({ type: 'Button', key: 'use-expert' }))?.text).toBe('Ask an expert')
   // What each feature does is written in its row, with a quiet Learn more beside the button.
   expect(await ui.find({ type: 'Text', text: /^Features$/ })).toBeDefined()
@@ -176,7 +190,15 @@ test('each feature has Use beside its switch: a prompt for the full skill, and n
   expect((await ui.find({ type: 'Button', key: 'more-expert' }))?.text).toBe('Learn more')
   // No status line under the rows: what waits shows as a row above the bar.
   expect(await ui.find({ type: 'Text', text: /Watching \d+ pattern|Nothing noticed yet/ })).toBeUndefined()
+  // The switches sit under Settings, each with what On does. Hide the bar is there too, and nothing picks what the bar shows.
+  expect(await ui.find({ type: 'Text', text: /^Settings$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Checks automatically as you work with Claude/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Suggests an expert when you face a key decision/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'coach-toggle-selfOn' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'coach-toggle-expertOn' })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'turn-off-mod' }))?.text).toBe('Hide the BuildPartner.ai bar')
+  expect(await ui.find({ type: 'Text', text: /Show in the bar/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'show-self' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'now' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'scan-past' })).toBeUndefined()
   // Use on Self-Improving: the full skill in the prompt, and the settings close.
