@@ -166,8 +166,16 @@ test('each feature has Use beside its switch: a prompt for the full skill, and n
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'expand' })
-  expect((await ui.find({ type: 'Button', key: 'use-self' }))?.text).toBe('Use')
-  expect((await ui.find({ type: 'Button', key: 'use-expert' }))?.text).toBe('Use')
+  expect((await ui.find({ type: 'Button', key: 'use-self' }))?.text).toBe('Review my setup')
+  expect((await ui.find({ type: 'Button', key: 'use-expert' }))?.text).toBe('Ask an expert')
+  // What each feature does is written in its row, with a quiet Learn more beside the button.
+  expect(await ui.find({ type: 'Text', text: /^Features$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /When you correct Claude, it suggests a fix/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Advice from proven business experts for your key decisions/ })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'more-self' }))?.text).toBe('Learn more')
+  expect((await ui.find({ type: 'Button', key: 'more-expert' }))?.text).toBe('Learn more')
+  // No status line under the rows: what waits shows as a row above the bar.
+  expect(await ui.find({ type: 'Text', text: /Watching \d+ pattern|Nothing noticed yet/ })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'coach-toggle-selfOn' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'now' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'scan-past' })).toBeUndefined()
@@ -213,8 +221,10 @@ test('the bar is one line: Self-Improving System and Expert Advice, tools only w
   engine(on, [])
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount(BAND('desktop'))
-  expect((await ui.find({ type: 'Text', text: /^Self-Improving System$/ }))?.text).toBe('Self-Improving System')
-  expect((await ui.find({ type: 'Text', text: /^Expert Advice$/ }))?.text).toBe('Expert Advice')
+  // The names sit on the bar line with their status word. Nothing explains itself on hover.
+  expect((await ui.find({ type: 'Text', text: /Self-Improving System: / }))?.text).toContain('Self-Improving System: ')
+  expect((await ui.find({ type: 'Text', text: /Expert Advice: / }))?.text).toContain('Expert Advice: ')
+  expect(await ui.find({ type: 'Text', text: /Spots decisions in your conversation/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /AI Coach|Ask the Expert/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^Additional tools$/ })).toBeUndefined()
   await ui.press({ key: 'expand' })
@@ -244,7 +254,7 @@ test('a suggestion is a row above the bar with Add rule and Don\'t add; the bar 
   const ui = await $.ui.mount(BAND('desktop'))
   expect((await ui.find({ type: 'Text', text: /^Suggested rule$/ }))?.text).toBe('Suggested rule')
   expect((await ui.find({ type: 'Button', key: 'card-dismiss-demo-outline-item-count' }))?.text).toBe("Don't add")
-  // ▾ stays: the settings and the rows above do not fight over the screen.
+  // ▼ stays: the settings and the rows above do not fight over the screen.
   expect(await ui.find({ type: 'Button', key: 'expand' })).toBeDefined()
   await ui.press({ key: 'card-dismiss-demo-outline-item-count' })
   expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeUndefined()

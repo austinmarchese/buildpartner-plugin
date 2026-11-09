@@ -10,4 +10,4 @@ Show me my BuildPartner.ai Self-Improving System suggestions and go through them
 3. On Apply, make the change through /bp-dev:improve-system, and show me the edit before you write it. On Dismiss, change nothing.
 4. Record every Apply and Dismiss with the BuildPartner.ai `resolve_suggestion` tool, using the suggestion's id. Not now needs no call.
 
-For anything else (turning the bar on or off, hiding it, the dashboard, your coach), tell me to use the ▾ on the BuildPartner.ai bar above the prompt.
+For anything else (turning the bar on or off, hiding it, the dashboard, your coach), tell me to use the ▼ on the BuildPartner.ai bar above the prompt.

@@ -769,11 +769,11 @@ async function dismiss($: Dollar, id: string): Promise<void> {
 
 /** BuildPartner.ai's tools, found by the MCP tool each one serves; pressing one starts a prompt. */
 // `prompt` gets the serving plugin's name (bp-dev or buildpartner) in place of {p}.
-const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: string; prompt: string }[] = [
-  { key: 'pad', tool: 'build_pad', label: 'BuildPad', hint: 'Turn a plan or report into a page you and your team can comment on.', prompt: '/{p}:build-pad ' },
-  { key: 'social', tool: 'social_intel', label: 'Social Intel', hint: 'Posts, stats, comments and transcripts from X, Instagram and YouTube.', prompt: 'Use BuildPartner social intel to ' },
-  { key: 'web', tool: 'web_research', label: 'Web Research', hint: 'Search the web or read any page, including ones that block bots.', prompt: '/{p}:web-research ' },
-  { key: 'founder', tool: 'get_founder_knowledge', label: 'Founder Knowledge', hint: "Answers from your company's own knowledge.", prompt: '/{p}-team:ask-founder ' },
+const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: string; prompt: string; more: string }[] = [
+  { key: 'pad', tool: 'build_pad', label: 'BuildPad', hint: "Create a plan before Claude builds, so you don't redo the work.", prompt: '/{p}:build-pad ', more: '/dashboard/build-pad' },
+  { key: 'social', tool: 'social_intel', label: 'Social Intel', hint: 'Research posts, creators and videos on X, Instagram and YouTube.', prompt: 'Use BuildPartner social intel to ', more: '/dashboard/social' },
+  { key: 'web', tool: 'web_research', label: 'Web Research', hint: "Search the web and read any page, even ones Claude can't.", prompt: '/{p}:web-research ', more: '/dashboard/web' },
+  { key: 'founder', tool: 'get_founder_knowledge', label: 'Founder Knowledge', hint: 'Ask how your founder would handle it.', prompt: '/{p}-team:ask-founder ', more: '/dashboard/team' },
 ]
 
 /** What the one-line bar shows, for the Show in the bar toggles. The tools sit under Additional tools in the expanded view. */
@@ -1249,7 +1249,7 @@ const WELCOME = {
   lines: [
     'Self-Improving System watches for the moments you correct Claude, then suggests a rule or skill so it gets it right next time.',
     'Expert Advice spots decisions in your conversation and brings in proven expert frameworks to answer them.',
-    'Nothing changes until you press Apply. More tools are under ▾.',
+    'Nothing changes until you press Apply. More tools are under ▼.',
   ],
 }
 
@@ -1292,6 +1292,15 @@ async function resetFirstRun($: Dollar): Promise<void> {
   // A preview draws over the real state, so a reset shows the real bar.
   await update($, previewAs, () => '')
   await update($, isExpanded, () => false)
+}
+
+// What each feature does, in its row under ▼ (nothing explains itself on hover).
+const SELF_LINE = "When you correct Claude, it suggests a fix so it doesn't happen again."
+const EXPERT_LINE = 'Advice from proven business experts for your key decisions.'
+
+/** Learn more (open): the page on BuildPartner.ai that explains a feature or tool. */
+async function learnMore($: Dollar, path: string): Promise<void> {
+  await openDashboard($, path)
 }
 
 // ---- How the bar handles things: the one structure everything follows ----
@@ -1433,7 +1442,7 @@ async function setTestState($: Dollar, key: string): Promise<string> {
 // header (and "1 of N" when more than one waits), the text, a primary button, a quiet
 // one, and Next. One shows at a time. Anything that needs a decision from the member
 // (a suggestion, the expert question, a tool tip, the first-run review, an upgrade, a
-// notice) is one of these rows; the bar line itself holds no button but ▾.
+// notice) is one of these rows; the bar line itself holds no button but ▼.
 
 type RowButton = { key: string; label: string; kind: Kind; onPress: () => unknown }
 type Row = {
@@ -1971,6 +1980,7 @@ export const register: Register = on => {
         const toggle = async () => {
           const open = await update($, isExpanded, x => !x)
           if (open) $.clock.after(0, () => void attempt(() => refreshHealth($), undefined))
+          if (open) $.clock.after(0, () => void attempt(() => findBpTools($), undefined))
         }
         const D = $.ui.resolve(e)
         band = e.surface === 'desktop' ? drawDesktop($, D, shown, toggle) : drawPlain($, D, shown, toggle)
@@ -2112,7 +2122,7 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
       return { text: await review($, 'asked') }
     }
     // Anything else typed after the command (a note dictated after a filled-in command, a typo) changes nothing.
-    if (verb) return { text: `${NAME}: "${verb.slice(0, 30)}" is not one of its commands, so nothing changed. Use the ▾ on the bar above the prompt.` }
+    if (verb) return { text: `${NAME}: "${verb.slice(0, 30)}" is not one of its commands, so nothing changed. Use the ▼ on the bar above the prompt.` }
     const open = await update($, isExpanded, v => !v)
     if (open) $.clock.after(0, () => void attempt(() => refreshHealth($), undefined))
     return { text: `${NAME}: bar ${open ? 'expanded' : 'collapsed'}.` }
@@ -2324,6 +2334,10 @@ function details($: Dollar, D: Elements, v: View) {
       {control as JSX.Element}
     </Box>
   )
+  // Learn more: a quiet link, never a second button, so the row keeps one obvious action.
+  const more = (key: string, name: string, path: string) => (
+    <Button key={`more-${key}`} plain label="Learn more" onPress={click($, 'open', `Learn more: ${name}`, () => learnMore($, path))} />
+  )
   // A Button holds only text, so a switch is drawn in glyphs: knob right and green when on.
   const toggle = (key: string, on: boolean, press: () => unknown) => (
     <Button key={key} plain onPress={click($, 'bar', key, press)}>
@@ -2332,47 +2346,54 @@ function details($: Dollar, D: Elements, v: View) {
   )
   const anyOn = v.enabled && (v.selfOn || v.expertOn)
   const armed = offArmedAt > 0 && v.now - offArmedAt <= 5_000
-  const isFresh = v.watch.length === 0 && v.list.length === 0
   const out = isOutOfRuns(v.plan)
   const status = !anyOn ? 'Off' : v.busy ? 'Running' : `On · ${v.run ? `last check ${ago(v.now, v.run.at)}` : 'no check yet'}`
-  const selfLine = v.scanning
-    ? `Reading your last ${PAST_SESSIONS} sessions in this project…`
-    : isFresh
-      ? 'Nothing noticed yet. It checks every ' + DEFAULTS.every + ' turns and after you correct Claude.'
-      : `Watching ${v.watch.length} ${v.watch.length === 1 ? 'pattern' : 'patterns'}. One becomes a suggestion once it comes up twice.`
   return (
     <Box flexDirection="column" rowGap={1} marginTop={1}>
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
-        {section('d-self', 'Self-Improving System', status, [
-          // Each feature reads like a tool: what it is on the left, Use and its switch on the right.
-          // Use is the full skill run by Claude in the chat, more than the automatic check.
+        {section('d-self', 'Features', status, [
+          // Each feature reads like a tool: what it is on the left; Learn more, its button and its switch on the right.
+          // The button is the full skill run by Claude in the chat, more than the automatic check.
           row(
             'self-row',
-            'Self-Improving',
-            v.selfOn ? selfLine : 'Suggests skills to create or improve from how you work.',
+            'Self-Improving System',
+            SELF_LINE,
             <Box key="self-controls" flexDirection="row" alignItems="center" columnGap={2}>
-              <Button key="use-self" label="Use" onPress={click($, 'prompt', 'Self-Improving', () => useSelf($))} />
+              {more('self', 'Self-Improving System', '/dashboard/builds/self-improving-system')}
+              <Button key="use-self" label="Review my setup" onPress={click($, 'prompt', 'Review my setup', () => useSelf($))} />
               {toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))}
             </Box>,
           ),
           row(
             'expert-row',
             'Expert Advice',
-            v.expertOn && v.ex ? `Flagged: ${v.ex.question}` : 'Flags business decisions worth asking an expert about.',
+            EXPERT_LINE,
             <Box key="expert-controls" flexDirection="row" alignItems="center" columnGap={2}>
-              <Button key="use-expert" label="Use" onPress={click($, isOutOfRuns(v.plan) ? 'open' : 'prompt', 'Expert Advice', () => useExpert($))} />
+              {more('expert', 'Expert Advice', '/dashboard/expert-advice')}
+              <Button key="use-expert" label="Ask an expert" onPress={click($, isOutOfRuns(v.plan) ? 'open' : 'prompt', 'Ask an expert', () => useExpert($))} />
               {toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true }))}
             </Box>,
           ),
         ])}
-        {section('d-tools', 'Additional tools', out ? 'free runs used up' : 'each starts a prompt with the tool', [
-          v.plan?.hasCoach ? row('tool-coach', 'Message Coach', `Opens your coach chat on ${NAME}.`, <Button key="message-coach" label="Open" onPress={click($, 'open', 'Message Coach', () => messageCoach($))} />) : '',
+        {section('d-tools', 'Additional tools', out ? 'free runs used up' : '', [
+          v.plan?.hasCoach ? row('tool-coach', 'Message Coach', `Message your coach on ${NAME}.`, <Button key="message-coach" label="Open" onPress={click($, 'open', 'Message Coach', () => messageCoach($))} />) : '',
           ...BP_TOOLS.map(t => {
             // connectedTools fills in the plugin that serves the tool (bp-dev or buildpartner).
             const live = connectedTools(v).find(c => c.key === t.key)
-            return live
-              ? row(`tool-${t.key}`, t.label, t.hint, <Button key={`tool-btn-${t.key}`} label="Use" onPress={click($, 'prompt', t.label, () => creditTool($, () => handOver($, live.prompt, 'prepend')))} />)
-              : row(`tool-${t.key}`, t.label, 'Not connected in this session.', desktop && Svg ? <Svg source={dot(MUTED)} alt="Not connected" width={10} height={10} /> : <Text color={MUTED}>●</Text>)
+            if (live)
+              return row(
+                `tool-${t.key}`,
+                t.label,
+                t.hint,
+                <Box key={`tool-controls-${t.key}`} flexDirection="row" alignItems="center" columnGap={2}>
+                  {more(t.key, t.label, t.more)}
+                  <Button key={`tool-btn-${t.key}`} label="Use" onPress={click($, 'prompt', t.label, () => creditTool($, () => handOver($, live.prompt, 'prepend')))} />
+                </Box>,
+              )
+            // Founder Knowledge is for team accounts: with no team it is left out, not shown as broken.
+            if (t.key === 'founder') return ''
+            // A plugin's tools connect when a session starts, so a new session is the fix.
+            return row(`tool-${t.key}`, t.label, 'Not connected. Start a new Claude session to connect it.', more(t.key, t.label, t.more))
           }),
           out ? (
             <Box key="tool-upgrade" flexDirection="row">
@@ -2432,7 +2453,7 @@ function details($: Dollar, D: Elements, v: View) {
             ])
           : ''}
       </Box>
-      {/* Health, kept quiet: one dim line. Only a problem gets color. ▴ in the bar is the one way to close. */}
+      {/* Health, kept quiet: one dim line. Only a problem gets color. ▲ in the bar is the one way to close. */}
       <Text dimColor wrap="truncate">
         {healthFooter(v)}
         {v.health && !v.health.isSignedIn ? <Text color={BAD}> · Not signed in, run the BuildPartner.ai install again</Text> : ''}
@@ -2518,29 +2539,6 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
   const Svg = svgOf(D)
   if (!Svg) return drawPlain($, D, v, toggle)
   const { Box, Text, Button } = D
-  // A hover card in the app's own colors (as the original mod draws them): no forced ink.
-  // Kept to two or three short lines: the surface shows it the moment the pointer lands, with no delay to set.
-  const card = (title: string, lines: string[]) => (
-    <Box
-      position="absolute"
-      bottom={1}
-      left={0}
-      display="none"
-      hover={{ display: 'flex' }}
-      flexDirection="column"
-      width={40}
-      paddingX={1}
-      borderStyle="round"
-      borderColor={LINE}
-      backgroundColor={CARD}
-    >
-      <Text bold>{title}</Text>
-      {lines.map(l => (
-        <Text wrap="wrap">{l}</Text>
-      ))}
-    </Box>
-  )
-
   const state = selfState(v)
   const self = (
     <Box key="self" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
@@ -2549,36 +2547,20 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
       <Text>
         {' '}Self-Improving System: <Text bold color={state.color}>{state.word}</Text>
       </Text>
-      {card('Self-Improving System', [
-        v.enabled && v.selfOn ? 'Spots when you correct Claude and suggests the fix. Nothing changes until you press Apply.' : 'Off. Turn it on under ▾.',
-        v.list.length > 0
-          ? `${v.list.length} ${v.list.length === 1 ? 'suggestion' : 'suggestions'} ready`
-          : v.run
-            ? `Last checked ${ago(v.now, v.run.at)}`
-            : `Checks every ${DEFAULTS.every} turns and when you correct Claude.`,
-      ])}
     </Box>
   )
 
-  // Expert Advice: its switch word, and one press asks the expert about this conversation.
-  const out = isOutOfRuns(v.plan)
+  // Expert Advice: its status word. What each feature does is explained under ▼, not on hover.
   const ex = expertState(v)
   const expertItem = (
     <Box key="tool-expert" position="relative" flexDirection="row" alignItems="center" columnGap={0} flexShrink={0}>
       <Text>
         <Text color={LOGO_TINT}>✦</Text> Expert Advice: <Text bold color={ex.color}>{ex.word}</Text>
       </Text>
-      {card(
-        'Expert Advice',
-        [
-          v.ex ? `Flagged: ${v.ex.question}` : 'Spots decisions in your conversation and brings in proven expert frameworks to answer them.',
-          out ? 'You have used your free runs.' : '',
-        ].filter(Boolean),
-      )}
     </Box>
   )
 
-  // Everything that needs the member (suggestions included) is a row above: the bar line's one button is ▾.
+  // Everything that needs the member (suggestions included) is a row above: the bar line's one button is ▼.
   const row = shownRow($, v)
 
   return (
@@ -2595,7 +2577,7 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         {v.off.includes('expert') ? '' : expertItem}
         <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" flexDirection="row" alignItems="center" columnGap={2}>
           <Button key="expand" plain onPress={click($, 'bar', 'Settings', toggle)}>
-            <Text bold>{v.open ? '▴' : '▾'}</Text>
+            <Text bold>{v.open ? '▲' : '▼'}</Text>
           </Button>
         </Box>
       </Box>
@@ -2617,7 +2599,7 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
     <Box flexDirection="column">
       {topCardPlain($, D, v)}
       <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-        <Button key="expand" plain label={v.open ? '▴' : '▾'} onPress={click($, 'bar', 'Settings', toggle)} />
+        <Button key="expand" plain label={v.open ? '▲' : '▼'} onPress={click($, 'bar', 'Settings', toggle)} />
         <Text>
           <Text bold>{NAME}</Text>
           <Text dimColor> · {short ? 'Self-Improving' : 'Self-Improving System'}: </Text>
