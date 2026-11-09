@@ -152,7 +152,7 @@ test('Review recent sessions is a prompt: the click fills the box, and sending i
   await after.unmount()
 })
 
-test('Review this session now is a prompt too, and closes the settings', async ($, on) => {
+test('each feature has Use beside its switch: a prompt for the full skill, and no loose button under the rows', async ($, on) => {
   mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   engine(on, [])
@@ -161,13 +161,36 @@ test('Review this session now is a prompt too, and closes the settings', async (
     filled.push(e.text)
     return { isFilled: true, text: e.text, cursor: e.text.length }
   })
+  on('prompt.read', () => ({ value: { text: '', cursor: 0 } }))
   on('ui.toast', () => ({ value: undefined }))
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'expand' })
-  await ui.press({ key: 'now' })
-  expect(filled).toEqual([`/${PLUGIN}:plugin now`])
+  expect((await ui.find({ type: 'Button', key: 'use-self' }))?.text).toBe('Use')
+  expect((await ui.find({ type: 'Button', key: 'use-expert' }))?.text).toBe('Use')
+  expect(await ui.find({ type: 'Button', key: 'coach-toggle-selfOn' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'now' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'scan-past' })).toBeUndefined()
+  // Use on Self-Improving: the full skill in the prompt, and the settings close.
+  await ui.press({ key: 'use-self' })
+  expect(filled[0]).toMatch(/^\/[a-z-]+:improve-system $/)
+  expect(await ui.find({ type: 'Button', key: 'use-self' })).toBeUndefined()
+  await ui.press({ key: 'expand' })
+  await ui.press({ key: 'use-expert' })
+  expect(filled[1]).toMatch(/^\/[a-z-]+:expert-advice /)
+  await ui.unmount()
+})
+
+test('words typed after a bar command change nothing', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [])
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  const out = (await $.command.run({ command: 'buildpartner:plugin', args: 'nowI thought this would be expert advice' } as never)) as { text?: string }
+  expect(out.text ?? '').toContain('nothing changed')
+  const ui = await $.ui.mount(BAND('desktop'))
+  // The settings did not open.
+  expect(await ui.find({ type: 'Button', key: 'use-self' })).toBeUndefined()
   await ui.unmount()
 })
 

@@ -1268,10 +1268,16 @@ async function runScan($: Dollar): Promise<void> {
   await promptCommand($, 'scan')
 }
 
-/** Review this session now (prompt): the same, for the conversation in front of them. */
-async function runReview($: Dollar): Promise<void> {
+/** Use, on Self-Improving (prompt): the full improve-system skill, run by Claude in the chat. More than the automatic check. */
+async function useSelf($: Dollar): Promise<void> {
   await update($, isExpanded, () => false)
-  await promptCommand($, 'now')
+  await handOver($, '/bp-dev:improve-system ', 'prepend')
+}
+
+/** Use, on Expert Advice (prompt): the expert-advice skill, with the flagged question when there is one. */
+async function useExpert($: Dollar): Promise<void> {
+  await update($, isExpanded, () => false)
+  await askExpert($)
 }
 
 /** Puts this machine back to a new member's first run: the welcome card, then the review offer. Debug and /plugin welcome. */
@@ -1333,7 +1339,7 @@ function click($: Dollar, _kind: Kind, label: string, fn: () => unknown): () => 
   }
 }
 
-/** Not now, on the welcome card or the row above the bar: the review is still one press away under ▾. */
+/** Not now, on the welcome card or the row above the bar: the offer stays away (/bp-dev:plugin scan still runs it). */
 async function declineScan($: Dollar): Promise<void> {
   await attempt(() => $.store.set('scanDeclined', true), undefined)
   await update($, scanDeclined, () => true)
@@ -2105,6 +2111,8 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
     if (verb === 'now') {
       return { text: await review($, 'asked') }
     }
+    // Anything else typed after the command (a note dictated after a filled-in command, a typo) changes nothing.
+    if (verb) return { text: `${NAME}: "${verb.slice(0, 30)}" is not one of its commands, so nothing changed. Use the ▾ on the bar above the prompt.` }
     const open = await update($, isExpanded, v => !v)
     if (open) $.clock.after(0, () => void attempt(() => refreshHealth($), undefined))
     return { text: `${NAME}: bar ${open ? 'expanded' : 'collapsed'}.` }
@@ -2336,31 +2344,25 @@ function details($: Dollar, D: Elements, v: View) {
     <Box flexDirection="column" rowGap={1} marginTop={1}>
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
         {section('d-self', 'Self-Improving System', status, [
-          row('self-row', 'Self-Improving', v.selfOn ? selfLine : 'Suggests skills to create or improve from how you work.', toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))),
-          v.selfOn && (!v.scanned || v.scanning) ? (
-            <Box key="self-scan" flexDirection="row">
-              <Button key="scan-past" label={v.scanning ? 'Reviewing recent sessions…' : SCAN_LABEL} onPress={click($, 'prompt', SCAN_LABEL, () => (v.scanning ? undefined : runScan($)))} />
-            </Box>
-          ) : (
-            ''
+          // Each feature reads like a tool: what it is on the left, Use and its switch on the right.
+          // Use is the full skill run by Claude in the chat, more than the automatic check.
+          row(
+            'self-row',
+            'Self-Improving',
+            v.selfOn ? selfLine : 'Suggests skills to create or improve from how you work.',
+            <Box key="self-controls" flexDirection="row" alignItems="center" columnGap={2}>
+              <Button key="use-self" label="Use" onPress={click($, 'prompt', 'Self-Improving', () => useSelf($))} />
+              {toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))}
+            </Box>,
           ),
           row(
             'expert-row',
             'Expert Advice',
             v.expertOn && v.ex ? `Flagged: ${v.ex.question}` : 'Flags business decisions worth asking an expert about.',
-            toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true })),
-          ),
-          anyOn ? (
-            <Box key="now-row" flexDirection="row">
-              <Button
-                key="now"
-                label={v.busy && !v.scanning ? 'Reviewing this session…' : 'Review this session now'}
-                variant="primary"
-                onPress={click($, 'prompt', 'Review this session now', () => runReview($))}
-              />
-            </Box>
-          ) : (
-            ''
+            <Box key="expert-controls" flexDirection="row" alignItems="center" columnGap={2}>
+              <Button key="use-expert" label="Use" onPress={click($, isOutOfRuns(v.plan) ? 'open' : 'prompt', 'Expert Advice', () => useExpert($))} />
+              {toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true }))}
+            </Box>,
           ),
         ])}
         {section('d-tools', 'Additional tools', out ? 'free runs used up' : 'each starts a prompt with the tool', [
