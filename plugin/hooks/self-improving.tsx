@@ -816,7 +816,6 @@ const EXPERT_DEFAULT =
 /** Not now: drops the flagged question, and ends the dev "expert" preview, which would draw it again. */
 async function skipExpert($: Dollar): Promise<void> {
   await update($, expert, () => null)
-  if ((await attempt(() => read($, previewAs), '')) === 'expert') await update($, previewAs, () => '')
 }
 
 /** Ask the expert: hands the flagged question (or the conversation itself) to /bp-dev:expert-advice. */
@@ -892,7 +891,6 @@ async function offerTip($: Dollar, key: ToolTip['key']): Promise<void> {
 /** Not now: drops the tip (it comes back for this tool in a week at the soonest), and ends the dev preview of it. */
 async function skipTip($: Dollar): Promise<void> {
   await update($, toolTip, () => null)
-  if ((await attempt(() => read($, previewAs), '')) === 'tip') await update($, previewAs, () => '')
 }
 
 /** Try it: puts the tool's prompt at the front of the draft, as its button under Additional tools does. */
@@ -1285,12 +1283,10 @@ async function resetFirstRun($: Dollar): Promise<void> {
 
 /**
  * Every button above the bar runs through here. A failure is never silent: it shows a toast and
- * lands in Debug as Last error. A press also ends a preview, since a preview draws over the
- * state the press just changed and the click would look like it did nothing.
+ * lands in Debug as Last error.
  */
 function press($: Dollar, label: string, fn: () => unknown): () => Promise<void> {
   return async () => {
-    await attempt(() => update($, previewAs, () => ''), '')
     try {
       await fn()
     } catch (err) {
@@ -1311,6 +1307,83 @@ async function declineScan($: Dollar): Promise<void> {
 /** The first-run step, offered right above the bar (the welcome card offers it first) until it has run or was declined. */
 function showScanRow(v: View): boolean {
   return v.welcomed && v.enabled && v.selfOn && !v.scanned && !v.scanDeclined
+}
+
+// ---- Test states (dev builds) ----
+//
+// Each one puts the bar into a REAL state, so every button on it works as it does for a
+// member. (A preview only draws: it suits what no button changes, the plan and the sign-in.)
+// Debug has a button per state; /bp-dev:plugin test <key> does the same.
+
+const TEST_STATES: readonly { key: string; label: string }[] = [
+  { key: 'first-run', label: 'First run' },
+  { key: 'suggestions', label: '2 suggestions' },
+  { key: 'expert', label: 'Expert question' },
+  { key: 'tip', label: 'Tool tip' },
+  { key: 'notices', label: '2 notifications' },
+  { key: 'everything', label: 'All at once' },
+  { key: 'clear', label: 'Clear test states' },
+]
+
+// Ids start with "preview-" so nothing about them is reported to Admin > Mod (reportEvent).
+const TEST_NOTICES: TeamNotice[] = [
+  { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' },
+  { id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' },
+]
+
+/** Puts the bar into a test state for real and says what it did. */
+async function setTestState($: Dollar, key: string): Promise<string> {
+  const now = await $.clock.now()
+  const done: string[] = []
+  const all = key === 'everything'
+  if (key === 'first-run') {
+    await resetFirstRun($)
+    return "back to a new member's first run."
+  }
+  if (key === 'clear') {
+    const map = await ledger($)
+    for (const k of Object.keys(map)) if (k.startsWith('demo-')) delete map[k]
+    await saveLedger($, map)
+    await update($, expert, () => null)
+    await update($, toolTip, () => null)
+    await update($, notices, list => list.filter(n => !n.id.startsWith('preview-')))
+    await update($, rowAt, () => 0)
+    return 'test states cleared.'
+  }
+  if (key === 'suggestions' || all) {
+    const map = await ledger($)
+    map[DEMO.id] = { ...DEMO, firstSeen: now, lastSeen: now }
+    map['demo-skill'] = { ...DEMO, id: 'demo-skill', type: 'skill_fix', target: '.claude/skills/weekly-report/SKILL.md', change: 'Add a step: pull last week numbers before drafting.', firstSeen: now, lastSeen: now }
+    await saveLedger($, map)
+    done.push('2 suggestions')
+  }
+  if (key === 'expert' || all) {
+    await update($, expert, () => ({ category: 'sales', topic: 'Starter tier pricing', question: 'Should the starter offer be $49 a month or $490 a year?', at: now }))
+    done.push('an expert question')
+  }
+  if (key === 'tip' || all) {
+    // A tip shows only for a tool connected in this session.
+    const found = await attempt(() => read($, bpTools), [] as string[])
+    const tool = (['web', 'social', 'pad'] as const).find(k => found.some(t => t.startsWith(`${k}:`)))
+    if (tool) {
+      await update($, toolTip, () => ({ key: tool, at: now }))
+      done.push('a tool tip')
+    } else if (!all) {
+      return 'no BuildPartner.ai tool is connected in this session, so no tool tip can show.'
+    }
+  }
+  if (key === 'notices' || all) {
+    // A test notice dismissed earlier would be swept away again (syncDismissed): forget that.
+    const ids = TEST_NOTICES.map(n => n.id)
+    await attempt(async () => $.store.set('dismissedNotices', (await dismissedNotices($)).filter(x => !ids.includes(x))), undefined)
+    await update($, notices, list => [...TEST_NOTICES, ...list.filter(n => !ids.includes(n.id))])
+    done.push('2 notifications')
+  }
+  if (done.length === 0) return `test states are ${TEST_STATES.map(t => t.key).join(', ')}.`
+  // The rows show above the bar: put the settings away and start at the first one.
+  await update($, isExpanded, () => false)
+  await update($, rowAt, () => 0)
+  return `${done.join(', ')} above the bar. Every button works for real.`
 }
 
 // ---- The row above the bar ----
@@ -1962,7 +2035,11 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
       const now = await $.clock.now()
       map[DEMO.id] = { ...DEMO, firstSeen: now, lastSeen: now }
       await saveLedger($, map)
-      return { text: `${NAME}: a demo suggestion is in the bar. Press Review to see the card. /${$.plugin.name}:plugin demo clear removes it.` }
+      return { text: `${NAME}: a demo suggestion is above the bar. /${$.plugin.name}:plugin demo clear removes it.` }
+    }
+    if (verb === 'test') {
+      if (!isDevBuild($)) return { text: `${NAME}: test states are for dev builds only.` }
+      return { text: `${NAME}: ${await setTestState($, arg)}` }
     }
     if (verb === 'preview') {
       // Dev builds only: draw the bar in a preview state (the same list as the Debug section).
@@ -2092,12 +2169,7 @@ const PREVIEWS: readonly { key: string; label: string }[] = [
   { key: 'out', label: 'Free, out of runs' },
   { key: 'pro', label: 'Pro' },
   { key: 'exec', label: 'Executive (coach)' },
-  { key: 'suggestions', label: 'Suggestions waiting' },
-  { key: 'expert', label: 'Expert question' },
-  { key: 'tip', label: 'Tool tip (Web Research)' },
   { key: 'signedout', label: 'Not signed in' },
-  { key: 'notice', label: 'Notification from the team' },
-  { key: 'video', label: 'New video from Austin' },
 ]
 
 /** The view with a preview state laid over it. */
@@ -2115,31 +2187,21 @@ function withPreview(v: View, key: string): View {
       return { ...v, plan: plan('Pro', true, null, false) }
     case 'exec':
       return { ...v, plan: plan('Executive', true, null, true) }
-    case 'suggestions':
-      return { ...v, list: [{ ...DEMO, lastSeen: now }, { ...DEMO, id: 'demo-skill', type: 'skill_fix', target: '.claude/skills/weekly-report/SKILL.md', change: 'Add a step: pull last week numbers before drafting.', lastSeen: now }] }
-    case 'expert':
-      return { ...v, list: [], ex: { category: 'sales', topic: 'Starter tier pricing', question: 'Should the starter offer be $49 a month or $490 a year?', at: now } }
-    case 'tip':
-      return { ...v, list: [], ex: null, tip: { key: 'web', at: now }, tools: v.tools.some(t => t.startsWith('web:')) ? v.tools : [...v.tools, 'web:bp-dev'] }
     case 'signedout':
       return { ...v, health: { ...health, isSignedIn: false } }
-    case 'notice':
-      return {
-        ...v,
-        welcomed: true,
-        notices: [
-          { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' },
-          { id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' },
-        ],
-      }
-    case 'video':
-      return { ...v, welcomed: true, notices: [{ id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' }] }
     default:
       return v
   }
 }
 
 /** Dev builds only: what the team needs while testing, as name and value rows. */
+/** What waits above the bar right now, for Debug: "3 waiting: Expert Advice, Suggested rule, New video". */
+function aboveTheBar($: Dollar, v: View): string {
+  if (!v.welcomed) return 'the welcome card'
+  const rows = rowsAbove($, v)
+  return rows.length === 0 ? 'nothing waiting' : `${rows.length} waiting: ${rows.map(r => r.header).join(', ')}`
+}
+
 function debugLines(v: View): [string, string][] {
   const h = v.health
   const run = v.run
@@ -2305,22 +2367,22 @@ function details($: Dollar, D: Elements, v: View) {
         {v.dev
           ? section('d-debug', 'Debug', 'dev build only', [
               // Same rows as every section: the name bold on the left, the value dim beside it.
-              ...debugLines(v).map(([name, value]) => (
+              ...[...debugLines(v), ['Above the bar', aboveTheBar($, v)] as [string, string]].map(([name, value]) => (
                 <Text key={`dbg-${name}`} wrap="wrap">
                   <Text bold>{name}</Text>
                   <Text dimColor> {value}</Text>
                 </Text>
               )),
-              row(
-                'dbg-reset',
-                'Start over as a new member',
-                'Shows the welcome card and the review offer again, for real, on this machine.',
-                <Button key="dbg-reset-first-run" label="Reset first run" onPress={() => resetFirstRun($)} />,
-              ),
+              row('dbg-test', 'Test a state', 'Puts the bar in that state for real on this machine, so every button works. Clear test states undoes it.', ''),
+              <Box key="dbg-tests" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
+                {TEST_STATES.map(t => (
+                  <Button key={`ts-${t.key}`} label={t.label} onPress={press($, t.label, async () => $.ui.toast(`${NAME}: ${await setTestState($, t.key)}`))} />
+                ))}
+              </Box>,
               row(
                 'dbg-preview',
-                'Preview the bar as',
-                `${PREVIEWS.find(x => x.key === (v.preview ?? ''))?.label ?? v.preview}. Drawing only: buttons still act on your real account.`,
+                'Preview a plan',
+                `${PREVIEWS.find(x => x.key === (v.preview ?? ''))?.label ?? v.preview}. Drawing only: your real plan and sign-in do not change.`,
                 '',
               ),
               <Box key="dbg-previews" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
