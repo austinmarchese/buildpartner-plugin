@@ -1238,7 +1238,7 @@ const PLAY = svg(16, 16, 'New video', `<circle cx="8" cy="8" r="7" fill="${CLAY}
 const BELL = svg(
   16,
   16,
-  'From the BuildPartner.ai team',
+  'From BuildPartner.ai Team',
   `<path d="M8 1.8a4 4 0 0 0-4 4v2.6L2.8 10.8h10.4L12 8.4V5.8a4 4 0 0 0-4-4z" fill="none" stroke="${CLAY}" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.4 13a1.7 1.7 0 0 0 3.2 0" fill="none" stroke="${CLAY}" stroke-width="1.4" stroke-linecap="round"/>`,
 )
 
@@ -1528,7 +1528,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
     rows.push({
       key: `bp-notice-${n.id}`,
       icon: n.kind === 'video' ? 'play' : 'bell',
-      header: n.kind === 'video' ? 'New video' : `From the ${NAME} team`,
+      header: n.kind === 'video' ? 'New video' : `From ${NAME} Team`,
       text: n.message,
       primary: n.linkLabel ? { key: `notice-open-${n.id}`, label: n.linkLabel, kind: 'open', onPress: () => openNotice($, n) } : undefined,
       secondary: { key: `notice-dismiss-${n.id}`, label: 'Dismiss', kind: 'bar', onPress: () => dismissNotice($, n.id) },
@@ -1560,7 +1560,8 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
         <Svg source={icon} alt="" width={16} height={16} />
         <Box flexDirection="column" flexGrow={1} flexShrink={1}>
           <Text wrap="wrap">
-            <Text bold color={LOGO_TINT}>
+            {/* A team notice's header is a quiet label, not bold: the message is the point. */}
+            <Text bold={!r.notice} color={LOGO_TINT}>
               {r.header}
             </Text>
             <Text dimColor>
