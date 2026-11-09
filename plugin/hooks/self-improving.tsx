@@ -2352,16 +2352,16 @@ function details($: Dollar, D: Elements, v: View) {
     <Box flexDirection="column" rowGap={1} marginTop={1}>
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
         {section('d-self', 'Features', status, [
-          // Each feature reads like a tool: what it is on the left; Learn more, its button and its switch on the right.
+          // Each feature reads like a tool: what it is on the left; then its switch, its button and Learn more, in that order.
           // The button is the full skill run by Claude in the chat, more than the automatic check.
           row(
             'self-row',
             'Self-Improving System',
             SELF_LINE,
             <Box key="self-controls" flexDirection="row" alignItems="center" columnGap={2}>
-              {more('self', 'Self-Improving System', '/dashboard/builds/self-improving-system')}
-              <Button key="use-self" label="Review my setup" onPress={click($, 'prompt', 'Review my setup', () => useSelf($))} />
               {toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))}
+              <Button key="use-self" label="Review my setup" onPress={click($, 'prompt', 'Review my setup', () => useSelf($))} />
+              {more('self', 'Self-Improving System', '/dashboard/builds/self-improving-system')}
             </Box>,
           ),
           row(
@@ -2369,9 +2369,9 @@ function details($: Dollar, D: Elements, v: View) {
             'Expert Advice',
             EXPERT_LINE,
             <Box key="expert-controls" flexDirection="row" alignItems="center" columnGap={2}>
-              {more('expert', 'Expert Advice', '/dashboard/expert-advice')}
-              <Button key="use-expert" label="Ask an expert" onPress={click($, isOutOfRuns(v.plan) ? 'open' : 'prompt', 'Ask an expert', () => useExpert($))} />
               {toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true }))}
+              <Button key="use-expert" label="Ask an expert" onPress={click($, isOutOfRuns(v.plan) ? 'open' : 'prompt', 'Ask an expert', () => useExpert($))} />
+              {more('expert', 'Expert Advice', '/dashboard/expert-advice')}
             </Box>,
           ),
         ])}
@@ -2386,8 +2386,8 @@ function details($: Dollar, D: Elements, v: View) {
                 t.label,
                 t.hint,
                 <Box key={`tool-controls-${t.key}`} flexDirection="row" alignItems="center" columnGap={2}>
-                  {more(t.key, t.label, t.more)}
                   <Button key={`tool-btn-${t.key}`} label="Use" onPress={click($, 'prompt', t.label, () => creditTool($, () => handOver($, live.prompt, 'prepend')))} />
+                  {more(t.key, t.label, t.more)}
                 </Box>,
               )
             // Founder Knowledge is for team accounts: with no team it is left out, not shown as broken.
