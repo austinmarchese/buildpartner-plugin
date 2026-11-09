@@ -27,6 +27,10 @@ try {
   // update each independently with the same grep-gate pattern so an enterprise
   // dev machine's team plugin also gets refreshed by this hook.
   //
+  // The dev plugin itself (bp-dev@bp-dev) is updated the same way, only when
+  // installed. Without it a dev machine stays on the build it was installed
+  // with until someone updates it by hand.
+  //
   // `claude` is resolved here rather than trusted to be on PATH. A Claude Code
   // started from the Claude Desktop app does not get the member's shell PATH,
   // so a bare `claude` can be "command not found" even though it is running
@@ -42,7 +46,7 @@ try {
   const resolve = `c=$(command -v claude 2>/dev/null); for p in ${candidates.join(" ")}; do [ -n "$c" ] || { [ -x "$p" ] && c="$p"; }; done; [ -n "$c" ] || exit 0;`;
   const cmd =
     resolve +
-    " \"$c\" plugin marketplace update 2>/dev/null && \"$c\" plugin update buildpartner@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'buildpartner-team@buildpartner' && \"$c\" plugin update buildpartner-team@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'bp-dev-team@bp-dev' && \"$c\" plugin update bp-dev-team@bp-dev 2>/dev/null";
+    " \"$c\" plugin marketplace update 2>/dev/null && \"$c\" plugin update buildpartner@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'buildpartner-team@buildpartner' && \"$c\" plugin update buildpartner-team@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'bp-dev-team@bp-dev' && \"$c\" plugin update bp-dev-team@bp-dev 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'bp-dev@bp-dev' && \"$c\" plugin update bp-dev@bp-dev 2>/dev/null";
   const child = spawn("sh", ["-c", cmd], {
     detached: true,
     stdio: "ignore",
