@@ -2489,7 +2489,7 @@ function connectedTools(v: View) {
 }
 
 /** The cards under the bar, as the original mod lays them out: Self-Improving and Customize, plus Health, and Debug in dev builds. */
-function details($: Dollar, D: Elements, v: View) {
+function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
   const { Box, Text, Button } = D
   const Svg = svgOf(D)
   const desktop = v.surface === 'desktop'
@@ -2625,11 +2625,18 @@ function details($: Dollar, D: Elements, v: View) {
             ])
           : ''}
       </Box>
-      {/* Health, kept quiet: one dim line. Only a problem gets color. ▲ in the bar is the one way to close. */}
-      <Text dimColor wrap="truncate">
-        {healthFooter(v)}
-        {v.health && !v.health.isSignedIn ? <Text color={BAD}> · Not signed in, run the BuildPartner.ai install again</Text> : ''}
-      </Text>
+      {/* Health, kept quiet: one dim line. Only a problem gets color. ▲ at the right closes the panel from the bottom, the same as ▲ in the bar. */}
+      <Box flexDirection="row" alignItems="center" columnGap={2}>
+        <Text dimColor wrap="truncate">
+          {healthFooter(v)}
+          {v.health && !v.health.isSignedIn ? <Text color={BAD}> · Not signed in, run the BuildPartner.ai install again</Text> : ''}
+        </Text>
+        <Box flexGrow={1} flexShrink={0} justifyContent="flex-end" flexDirection="row">
+          <Button key="collapse-bottom" plain onPress={click($, 'bar', 'Settings', collapse)}>
+            <Text bold>▲</Text>
+          </Button>
+        </Box>
+      </Box>
     </Box>
   )
 }
@@ -2753,7 +2760,7 @@ function drawDesktop($: Dollar, D: Elements, v: View, toggle: () => unknown) {
           </Button>
         </Box>
       </Box>
-      {v.open ? details($, D, v) : ''}
+      {v.open ? details($, D, v, toggle) : ''}
     </Box>
   )
 }
@@ -2786,7 +2793,7 @@ function drawPlain($: Dollar, D: Elements, v: View, toggle: () => unknown) {
         {v.tag ? <Text color={CAUTION}>{v.tag}</Text> : ''}
       </Box>
       {row && !v.open ? drawRow($, D, null, row, v.room) : ''}
-      {v.open ? details($, D, v) : ''}
+      {v.open ? details($, D, v, toggle) : ''}
     </Box>
   )
 }

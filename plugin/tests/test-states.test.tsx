@@ -153,3 +153,16 @@ test('a plan preview draws only: a click on a real row still works under it', as
   expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('the expanded bar has a collapse button at its bottom, and it closes the panel', async ($, on) => {
+  await member($, on)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Button', key: 'collapse-bottom' })).toBeUndefined()
+  await ui.press({ key: 'expand' })
+  expect(await ui.find({ type: 'Button', key: 'collapse-bottom' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Settings$/ })).toBeDefined()
+  await ui.press({ key: 'collapse-bottom' })
+  expect(await ui.find({ type: 'Button', key: 'collapse-bottom' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^Settings$/ })).toBeUndefined()
+  await ui.unmount()
+})
