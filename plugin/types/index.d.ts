@@ -95,6 +95,27 @@ export type MemberPlan = {
   at: number
 }
 
+/**
+ * An AI Audit run in this session, read from the file the audit writes after each stage
+ * (~/.buildpartner/audit/findings.json). It stays on this machine: the bar sends none of it.
+ */
+export type AuditRun = {
+  /** When the run began (epoch ms): a file older than this is an earlier audit's. 0 for a continued run. */
+  startedAt: number
+  /** When the bar last heard from the run (epoch ms). */
+  at: number
+  /** The sweep stage last finished, 1 to 6. 0 before the first save, or when the file does not say. */
+  stage: number
+  /** Findings in the file so far. */
+  found: number
+  /** The newest finding's title, '' when none. */
+  newest: string
+  /** The file says the audit finished. */
+  isDone: boolean
+  /** Dismissed, or the chart was opened: the row stays away for the rest of the run. */
+  isAway: boolean
+}
+
 /** A notification the BuildPartner.ai team sent to the bar (Admin > Mod, GET /api/buildpartner/mod/notices). */
 export type TeamNotice = {
   id: string
@@ -136,6 +157,7 @@ declare module 'claude-code' {
       isWelcomed: boolean
       rowAt: number
       upgradeSkipped: boolean
+      audit: Shaped<AuditRun | null>
     }
   }
 }

@@ -23,7 +23,7 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun } from '../types'
+import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun, AuditRun } from '../types'
 
 type Dollar = EngineInterface
 
@@ -85,6 +85,8 @@ const notices = atom({ plugin: 'bp-dev', key: 'notices' } as const, [] as TeamNo
 // Which row above the bar shows when more than one call to action waits (Next steps through them).
 const rowAt = atom({ plugin: 'bp-dev', key: 'rowAt' } as const, 0)
 const isWelcomed = atom({ plugin: 'bp-dev', key: 'isWelcomed' } as const, true)
+// An AI Audit run in this session: how far it is, read from the file the audit writes. null when none.
+const audit = atom({ plugin: 'bp-dev', key: 'audit' } as const, null as AuditRun | null, { shape: 'au-1' })
 
 type Settings = typeof DEFAULTS
 
@@ -1109,6 +1111,153 @@ async function openUrl($: Dollar, url: string): Promise<boolean> {
   return false
 }
 
+// ---- AI Audit: how far a run is, above the bar ----
+//
+// The AI Audit is a prompt the member runs (apps/web/lib/ai-audit.ts). Claude writes what it
+// has found to a file on their machine after each stage. The bar reads that file right after
+// Claude writes it and shows how far the run is: Passive, one row above the bar. Nothing is
+// sent anywhere from here. Open my chart opens the same link the prompt builds: the examples
+// ride after the #, which a browser never sends, so they reach the member's browser only.
+
+const AUDIT_DIR = '.buildpartner/audit'
+const AUDIT_FILE = `${AUDIT_DIR}/findings.json`
+/** The sweep's stages, as the prompt numbers them. */
+const AUDIT_STAGES = 6
+/** A run nothing was written for in this long has stopped: its row goes. */
+const AUDIT_STALE_MS = 60 * 60_000
+/** How each audit prompt opens (auditPrompt, continuePrompt, areaPrompt). */
+const AUDIT_PROMPT = /^\s*(?:(Run|Re-run|Continue) my AI Audit\b|Go deeper on [^.\n]{1,40} for my AI Audit\b)/
+/** A Bash command that opens or prints a built audit link: Claude took the member to their chart. */
+const AUDIT_LINK = /\/dashboard\/audit#import=[A-Za-z0-9_-]{20,}/
+
+/** Whether a tool call wrote or read the audit's files, or opened its link. Only ever looks at two strings. */
+function auditCall(call: Record<string, unknown>): 'file' | 'link' | null {
+  const path = typeof call.file_path === 'string' ? call.file_path : ''
+  const command = typeof call.command === 'string' ? call.command : ''
+  if (AUDIT_LINK.test(command)) return 'link'
+  return `${path}\n${command}`.replace(/\\/g, '/').includes(`${AUDIT_DIR}/`) ? 'file' : null
+}
+
+/** An audit prompt was sent: the row shows at once. A fresh run waits for its own first save; a continued one shows where it left off. */
+async function startAudit($: Dollar, text: string): Promise<void> {
+  const m = AUDIT_PROMPT.exec(text)
+  if (!m) return
+  const now = await $.clock.now()
+  const isFresh = m[1] === 'Run' || m[1] === 'Re-run'
+  await update($, audit, () => ({ startedAt: isFresh ? now : 0, at: now, stage: 0, found: 0, newest: '', isDone: false, isAway: false }))
+  if (!isFresh) await readAudit($)
+}
+
+/** Reads the audit's file into the row. A file from before this run (an earlier audit's) is left alone. */
+async function readAudit($: Dollar): Promise<void> {
+  const h = await home($)
+  if (!h) return
+  const path = `${h}/${AUDIT_FILE}`
+  const now = await $.clock.now()
+  const cur = await attempt(() => read($, audit), null)
+  const mtime = await attempt(async () => (await $.fs.stat(path)).mtimeMs, 0)
+  // No run known yet (the prompt was not seen): a file saved in the last minute is a run under way.
+  if (!cur && now - mtime > 60_000) return
+  if (cur && mtime < cur.startedAt - 2_000) return
+  const raw = await attempt(() => $.fs.read(path), '')
+  const j = await attempt(async () => JSON.parse(typeof raw === 'string' ? raw : '') as { status?: unknown; stage?: unknown; findings?: unknown }, null)
+  // Half-written or not JSON: keep what the row shows; the next save corrects it.
+  if (!j || !Array.isArray(j.findings)) return
+  const list = j.findings as { title?: unknown }[]
+  const lastTitle = list[list.length - 1]?.title
+  const stage = typeof j.stage === 'number' && j.stage >= 1 && j.stage <= AUDIT_STAGES ? Math.floor(j.stage) : (cur?.stage ?? 0)
+  await update($, audit, x => ({
+    startedAt: x?.startedAt ?? mtime,
+    at: now,
+    stage,
+    found: list.length,
+    newest: typeof lastTitle === 'string' ? lastTitle.trim().slice(0, 90) : '',
+    isDone: j.status === 'done',
+    isAway: x?.isAway ?? false,
+  }))
+}
+
+/** After a tool call that touched the audit: read the file, or put the finished row away once Claude opened the chart itself. */
+async function noteAuditCall($: Dollar, what: 'file' | 'link'): Promise<void> {
+  if (what === 'file') return readAudit($)
+  await update($, audit, x => (x && x.isDone ? { ...x, isAway: true } : x))
+}
+
+/** Dismiss, or after the chart opened: the row stays away for the rest of this run. */
+async function putAuditAway($: Dollar): Promise<void> {
+  await update($, audit, x => (x ? { ...x, isAway: true } : x))
+}
+
+/** UTF-8 text as base64url with no padding: what Node's Buffer gives the prompt's own link, without Node. */
+function base64url(text: string): string {
+  const bytes: number[] = []
+  for (const ch of text) {
+    let c = ch.codePointAt(0) ?? 0xfffd
+    if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd
+    if (c < 0x80) bytes.push(c)
+    else if (c < 0x800) bytes.push(0xc0 | (c >> 6), 0x80 | (c & 63))
+    else if (c < 0x10000) bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+    else bytes.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+  }
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] as number
+    const b = bytes[i + 1]
+    const c = bytes[i + 2]
+    out += (A[a >> 2] as string) + (A[((a & 3) << 4) | ((b ?? 0) >> 4)] as string)
+    if (b !== undefined) out += A[((b & 15) << 2) | ((c ?? 0) >> 6)] as string
+    if (c !== undefined) out += A[c & 63] as string
+  }
+  return out
+}
+
+/** Open my chart: the audit page, with the findings file in the link so the page shows the examples too. */
+async function openAuditChart($: Dollar): Promise<void> {
+  const a = await auth($)
+  const h = await home($)
+  const page = `${a.apiBase}/dashboard/audit`
+  const raw = h ? await attempt(() => $.fs.read(`${h}/${AUDIT_FILE}`), '') : ''
+  const link = typeof raw === 'string' && raw.trim() ? `${page}#import=${base64url(raw)}` : page
+  // A link too long for the system's opener still gets them to the page (the examples stay in Claude Code).
+  if (!(await openUrl($, link)) && (link === page || !(await openUrl($, page)))) {
+    $.ui.toast(`${NAME}: could not open a browser. Your chart is at ${page}`)
+    return
+  }
+  await putAuditAway($)
+}
+
+/** The audit's row, or null when no run shows: put away, or nothing saved for an hour. */
+function auditRow($: Dollar, v: View): Row | null {
+  const a = v.audit
+  if (!a || a.isAway || v.now - a.at > AUDIT_STALE_MS) return null
+  const count = `${a.found} ${a.found === 1 ? 'finding' : 'findings'}`
+  if (a.isDone) {
+    return {
+      key: 'audit-row',
+      icon: 'sparkle',
+      header: 'AI Audit',
+      context: 'done',
+      text: `${count} ready.`,
+      plain: `AI Audit done: ${count} ready.`,
+      primary: { key: 'audit-open', label: 'Open my chart', kind: 'open', onPress: () => openAuditChart($) },
+      secondary: { key: 'audit-dismiss', label: 'Dismiss', kind: 'bar', onPress: () => putAuditAway($) },
+    }
+  }
+  const stage = a.stage > 0 ? `stage ${a.stage} of ${AUDIT_STAGES}` : ''
+  const isSaved = a.stage > 0 || a.found > 0
+  return {
+    key: 'audit-row',
+    icon: 'sparkle',
+    header: 'AI Audit',
+    context: stage || undefined,
+    text: isSaved ? `${count} so far.` : 'Your audit is running.',
+    sub: a.newest ? `Newest: ${a.newest}` : isSaved ? undefined : 'Findings show here after each stage.',
+    plain: isSaved ? `AI Audit${stage ? `, ${stage}` : ''}: ${count} so far.` : 'Your AI Audit is running.',
+    secondary: { key: 'audit-dismiss', label: 'Dismiss', kind: 'bar', onPress: () => putAuditAway($) },
+  }
+}
+
 /**
  * Once a day per machine: tells BuildPartner.ai the mod is running, for Admin > Installs.
  * Sends only the versions and the surface, never conversation or file content.
@@ -1321,6 +1470,7 @@ async function promptCommand($: Dollar, verb: string): Promise<boolean> {
  */
 function click($: Dollar, _kind: Kind, label: string, fn: () => unknown): () => Promise<void> {
   return async () => {
+    countPress($, label)
     try {
       await fn()
     } catch (err) {
@@ -1330,6 +1480,49 @@ function click($: Dollar, _kind: Kind, label: string, fn: () => unknown): () => 
       $.ui.toast(`${NAME}: ${label} did not work (${msg}).`)
     }
   }
+}
+
+// How often each button is pressed, by its label, for Admin > Mod (migration 138).
+// Counted here and sent in one POST a minute (flushPresses), so a busy member
+// costs one request, not one per press. Labels only, never any content.
+const PRESS_LABEL_MAX = 60
+let presses: Record<string, number> = {}
+let pressesFlushedOnce = false
+let pressesPending = false
+
+/** The Debug section's own buttons (test states, previews) are the team's, not members', so they are not counted. */
+function isDebugPress(label: string): boolean {
+  return TEST_STATES.some(t => t.label === label) || PREVIEWS.some(p => p.label === label)
+}
+
+function countPress($: Dollar, label: string): void {
+  if (isDebugPress(label)) return
+  const key = label.slice(0, PRESS_LABEL_MAX)
+  presses[key] = (presses[key] ?? 0) + 1
+  // The first press in a while goes out at once, so a short session still reports; the rest ride the minute tick.
+  if (!pressesPending) {
+    pressesPending = true
+    $.clock.after(pressesFlushedOnce ? 60_000 : 0, () => void attempt(() => flushPresses($), undefined))
+  }
+}
+
+async function flushPresses($: Dollar): Promise<void> {
+  pressesPending = false
+  const batch = presses
+  if (Object.keys(batch).length === 0) return
+  presses = {}
+  pressesFlushedOnce = true
+  const a = await auth($)
+  if (!a.token) return
+  await attempt(
+    () =>
+      $.http.fetch(`${a.apiBase}/api/buildpartner/mod/presses`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presses: batch }),
+      }),
+    null,
+  )
 }
 
 /** Not now, on the welcome card or the row above the bar: the offer stays away (/bp-dev:plugin scan still runs it). */
@@ -1355,6 +1548,8 @@ const TEST_STATES: readonly { key: string; label: string }[] = [
   { key: 'expert', label: 'Expert question' },
   { key: 'tip', label: 'Tool tip' },
   { key: 'notices', label: '2 notifications' },
+  { key: 'audit', label: 'AI Audit running' },
+  { key: 'audit-done', label: 'AI Audit done' },
   { key: 'everything', label: 'All at once' },
   { key: 'clear', label: 'Clear test states' },
 ]
@@ -1381,6 +1576,7 @@ async function setTestState($: Dollar, key: string): Promise<string> {
     await update($, expert, () => null)
     await update($, toolTip, () => null)
     await update($, notices, list => list.filter(n => !n.id.startsWith('preview-')))
+    await update($, audit, () => null)
     await update($, rowAt, () => 0)
     return 'test states cleared.'
   }
@@ -1413,6 +1609,11 @@ async function setTestState($: Dollar, key: string): Promise<string> {
     await update($, notices, list => [...TEST_NOTICES, ...list.filter(n => !ids.includes(n.id))])
     done.push('2 notifications')
   }
+  if (key === 'audit' || key === 'audit-done' || all) {
+    const isDone = key === 'audit-done'
+    await update($, audit, () => ({ startedAt: now, at: now, stage: isDone ? 6 : 3, found: isDone ? 7 : 4, newest: 'Friday client report built by hand', isDone, isAway: false }))
+    done.push(isDone ? 'a finished AI Audit' : 'an AI Audit run')
+  }
   if (done.length === 0) return `test states are ${TEST_STATES.map(t => t.key).join(', ')}.`
   // The rows show above the bar: put the settings away and start at the first one.
   await update($, isExpanded, () => false)
@@ -1438,15 +1639,20 @@ type Row = {
   text: string
   /** A dim line under the text: why, for a suggestion. Desktop only. */
   sub?: string
+  /** The terminal's one line, when the text needs the header to make sense. */
+  plain?: string
   primary?: RowButton
   secondary?: RowButton
   /** Set when the row is one of the team's notices, so it is reported seen once drawn. */
   notice?: TeamNotice
 }
 
-/** What waits above the bar, most pressing first: the expert question, a tool tip, the suggestions, the first-run review, an upgrade, then the team's notices. */
+/** What waits above the bar, most pressing first: an AI Audit run under way, the expert question, a tool tip, the suggestions, the first-run review, an upgrade, then the team's notices. */
 function rowsAbove($: Dollar, v: View): Row[] {
   const rows: Row[] = []
+  // An audit the member is running right now comes first: it is what they are watching.
+  const run = auditRow($, v)
+  if (run) rows.push(run)
   const out = isOutOfRuns(v.plan)
   if (v.ex && v.enabled && v.expertOn) {
     rows.push({
@@ -1575,7 +1781,7 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
     <Box key={r.key} flexDirection="row" gap={1}>
       <Text color={CLAY}>{r.icon === 'play' ? '▶' : r.icon === 'sparkle' ? '✦' : '●'}</Text>
       <Text>
-        {cut(r.text, Math.max(10, room - buttons - count.length))}
+        {cut(r.plain ?? r.text, Math.max(10, room - buttons - count.length))}
         <Text dimColor>{count}</Text>
       </Text>
       {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.label, r.primary.onPress)} /> : ''}
@@ -1677,6 +1883,8 @@ type View = {
   scanDeclined: boolean
   /** Reading past sessions now. */
   scanning: boolean
+  /** An AI Audit run in this session, null when none. */
+  audit: AuditRun | null
   health: BarHealth | null
   dev: boolean
   tag: string
@@ -1830,6 +2038,8 @@ export const register: Register = on => {
     if (!e.isMeta && !e.command) {
       const m = /^\s*remember:\s*([\s\S]+)$/i.exec(e.text)
       if (m?.[1]) await attempt(() => remember($, m[1] as string), undefined)
+      // An AI Audit prompt: its row shows above the bar from the start. The prompt goes to Claude untouched.
+      await attempt(() => startAudit($, e.text), undefined)
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -1871,9 +2081,18 @@ export const register: Register = on => {
     const ours = e.tool === `mcp__${$.plugin.name}__resolve_suggestion` || e.tool === `mcp__${$.plugin.name}__review_now`
     if (!ours) {
       // The tool's arguments sit beside `tool` on the event (e.url for WebFetch).
-      const call = e as unknown as { tool: string }
+      const call = e as unknown as { tool: string } & Record<string, unknown>
       $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call), undefined))
-      return next(e)
+      // An AI Audit run saves its findings after each stage: the row reads them once this call is done.
+      const touched = auditCall(call)
+      if (!touched) return next(e)
+      const done = await next(e)
+      try {
+        $.clock.after(0, () => void attempt(() => noteAuditCall($, touched), undefined))
+      } catch {
+        // The call's result goes back whatever happens here.
+      }
+      return done
     }
     try {
       return await ownTool($, e as unknown as { tool: string; input: unknown })
@@ -1943,6 +2162,7 @@ export const register: Register = on => {
           rowAt: await attempt(() => read($, rowAt), 0),
           welcomed: await attempt(() => read($, isWelcomed), true),
           scanning: await attempt(() => read($, isScanning), false),
+          audit: await attempt(() => read($, audit), null),
           health: await attempt(() => read($, health), null),
           dev: isDevBuild($),
           tag: buildTag($),

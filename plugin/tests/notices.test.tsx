@@ -299,3 +299,34 @@ test('a suggestion and a notice share one queue: 1 of 2, Next steps between them
   expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('every button press is counted by label and sent to Admin > Mod', async ($, on) => {
+  mock.store(on, { welcomed: true })
+  mock.env(on, { HOME: '/home/m' })
+  const bodies: string[] = []
+  const clock = mock.clock(on)
+  on('command.register', () => ({ value: { command: 'plugin' } }))
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) => {
+    if (e.url.endsWith('/api/buildpartner/mod/presses')) bodies.push(String(e.init?.body ?? ''))
+    return { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } }
+  })
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount(BAND('desktop'))
+  await ui.press({ key: 'expand' })
+  await clock.advance(1)
+  // The first press goes out at once.
+  expect(bodies.length).toBe(1)
+  expect(JSON.parse(bodies[0]!)).toEqual({ presses: { Settings: 1 } })
+  // The next ones wait for the minute tick and travel together.
+  await ui.press({ key: 'expand' })
+  await ui.press({ key: 'expand' })
+  await clock.advance(1_000)
+  expect(bodies.length).toBe(1)
+  await clock.advance(60_000)
+  expect(bodies.length).toBe(2)
+  expect(JSON.parse(bodies[1]!)).toEqual({ presses: { Settings: 2 } })
+  await ui.unmount()
+})

@@ -109,11 +109,14 @@ test('test state "everything" fills one queue, and "clear" empties it', async ($
   await member($, on)
   await state($, 'everything')
   const ui = await $.ui.mount(BAND('desktop'))
-  // The expert question, two suggestions, two notifications (a tool tip joins only when a tool is connected).
-  expect(await ui.find({ type: 'Text', text: /1 of 5/ })).toBeDefined()
+  // An AI Audit run, the expert question, two suggestions, two notifications (a tool tip joins only when a tool is connected).
+  expect(await ui.find({ type: 'Text', text: /1 of 6/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^4 findings so far\.$/ })).toBeDefined()
+  await ui.press({ key: 'row-next' })
+  expect(await ui.find({ type: 'Text', text: /2 of 6/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'ask-expert-nudge' })).toBeDefined()
   await ui.press({ key: 'row-next' })
-  expect(await ui.find({ type: 'Text', text: /2 of 5/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /3 of 6/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeDefined()
   await ui.unmount()
   await state($, 'clear')
@@ -122,6 +125,7 @@ test('test state "everything" fills one queue, and "clear" empties it', async ($
   expect(await empty.find({ type: 'Button', key: 'ask-expert-nudge' })).toBeUndefined()
   expect(await empty.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeUndefined()
   expect(await empty.find({ type: 'Text', text: /Office hours are live/ })).toBeUndefined()
+  expect(await empty.find({ type: 'Text', text: /^AI Audit$/ })).toBeUndefined()
   await empty.unmount()
 })
 
@@ -129,7 +133,7 @@ test('Debug has a button per test state, and it sets the state for real', async 
   await member($, on)
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'expand' })
-  for (const key of ['first-run', 'suggestions', 'expert', 'tip', 'notices', 'everything', 'clear']) {
+  for (const key of ['first-run', 'suggestions', 'expert', 'tip', 'notices', 'audit', 'audit-done', 'everything', 'clear']) {
     expect(await ui.find({ type: 'Button', key: `ts-${key}` })).toBeDefined()
   }
   expect(await ui.find({ type: 'Text', text: /^Above the bar$/ })).toBeDefined()
