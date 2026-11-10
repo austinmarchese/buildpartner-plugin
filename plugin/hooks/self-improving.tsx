@@ -978,6 +978,14 @@ async function refreshNotices($: Dollar): Promise<void> {
     const id = typeof raw?.id === 'string' ? raw.id : ''
     const message = typeof raw?.message === 'string' ? raw.message.trim() : ''
     if (!id || !message || gone.has(id)) continue
+    if (raw.kind === 'prompt') {
+      // The team's prompt, as text for the prompt box: no control characters but new lines and tabs.
+      const prompt = typeof raw.prompt === 'string' ? raw.prompt.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, NOTICE_PROMPT_MAX) : ''
+      if (!prompt) continue
+      const label = (typeof raw.link_label === 'string' ? raw.link_label.trim() : '') || 'Copy prompt below'
+      list.push({ id, kind: 'prompt', message, linkLabel: label, linkHref: '', prompt })
+      continue
+    }
     const href = typeof raw.link_href === 'string' && /^https?:\/\//.test(raw.link_href) ? raw.link_href : ''
     const label = href && typeof raw.link_label === 'string' ? raw.link_label.trim() : ''
     list.push({ id, kind: raw.kind === 'video' ? 'video' : 'message', message, linkLabel: label, linkHref: label ? href : '' })
@@ -1046,6 +1054,17 @@ async function dismissNotice($: Dollar, id: string, report = true): Promise<void
   const kept = (await dismissedNotices($)).filter(x => x !== id)
   await attempt(() => $.store.set('dismissedNotices', [id, ...kept].slice(0, DISMISSED_KEEP)), undefined)
   await update($, notices, list => list.filter(n => n.id !== id))
+}
+
+/** The longest prompt a prompt notice may put in the box (the server caps it at the same length, migration 141). */
+const NOTICE_PROMPT_MAX = 4000
+
+/** A prompt notice's button: fills the prompt box with the team's prompt. The member reads it and presses Enter. */
+async function fillNotice($: Dollar, n: TeamNotice): Promise<void> {
+  if (!n.prompt) return
+  $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_clicked', n.id), undefined))
+  // Filled (or copied when the box would not take it): the member acted on it, so it goes away.
+  if (await handOver($, n.prompt)) await dismissNotice($, n.id, false)
 }
 
 /** The notice's button: opens its link and puts the notice away, since the member acted on it. */
@@ -1548,6 +1567,7 @@ const TEST_STATES: readonly { key: string; label: string }[] = [
   { key: 'expert', label: 'Expert question' },
   { key: 'tip', label: 'Tool tip' },
   { key: 'notices', label: '2 notifications' },
+  { key: 'prompt-notice', label: 'Prompt notification' },
   { key: 'audit', label: 'AI Audit running' },
   { key: 'audit-done', label: 'AI Audit done' },
   { key: 'everything', label: 'All at once' },
@@ -1559,6 +1579,16 @@ const TEST_NOTICES: TeamNotice[] = [
   { id: 'preview-notice', kind: 'message', message: 'Office hours are live Thursday at 1pm ET. Bring a workflow you want to automate.', linkLabel: 'Save my spot', linkHref: 'https://www.buildpartner.ai/dashboard' },
   { id: 'preview-video', kind: 'video', message: 'New video from Austin: how I run my week with Claude Code', linkLabel: 'Watch', linkHref: 'https://www.youtube.com/@austinmarchese' },
 ]
+
+// The "Prompt notification" test state: a notice whose button fills the prompt box.
+const TEST_PROMPT_NOTICE: TeamNotice = {
+  id: 'preview-prompt',
+  kind: 'prompt',
+  message: 'A new Claude model is out. Run this to see how it can improve your setup.',
+  linkLabel: 'Copy prompt below',
+  linkHref: '',
+  prompt: 'Review my CLAUDE.md, skills and settings for what the newest Claude model changes, and suggest updates. Show me each change before you make it.',
+}
 
 /** Puts the bar into a test state for real and says what it did. */
 async function setTestState($: Dollar, key: string): Promise<string> {
@@ -1608,6 +1638,12 @@ async function setTestState($: Dollar, key: string): Promise<string> {
     await attempt(async () => $.store.set('dismissedNotices', (await dismissedNotices($)).filter(x => !ids.includes(x))), undefined)
     await update($, notices, list => [...TEST_NOTICES, ...list.filter(n => !ids.includes(n.id))])
     done.push('2 notifications')
+  }
+  if (key === 'prompt-notice') {
+    const id = TEST_PROMPT_NOTICE.id
+    await attempt(async () => $.store.set('dismissedNotices', (await dismissedNotices($)).filter(x => x !== id)), undefined)
+    await update($, notices, list => [TEST_PROMPT_NOTICE, ...list.filter(n => n.id !== id)])
+    done.push('a prompt notification')
   }
   if (key === 'audit' || key === 'audit-done' || all) {
     const isDone = key === 'audit-done'
@@ -1720,7 +1756,12 @@ function rowsAbove($: Dollar, v: View): Row[] {
       icon: n.kind === 'video' ? 'play' : 'bell',
       header: n.kind === 'video' ? 'New video' : `From ${NAME} Team`,
       text: n.message,
-      primary: n.linkLabel ? { key: `notice-open-${n.id}`, label: n.linkLabel, kind: 'open', onPress: () => openNotice($, n) } : undefined,
+      primary:
+        n.kind === 'prompt' && n.prompt
+          ? { key: `notice-prompt-${n.id}`, label: n.linkLabel || 'Copy prompt below', kind: 'prompt', onPress: () => fillNotice($, n) }
+          : n.linkLabel
+            ? { key: `notice-open-${n.id}`, label: n.linkLabel, kind: 'open', onPress: () => openNotice($, n) }
+            : undefined,
       secondary: { key: `notice-dismiss-${n.id}`, label: 'Dismiss', kind: 'bar', onPress: () => dismissNotice($, n.id) },
       notice: n,
     })

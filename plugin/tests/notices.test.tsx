@@ -330,3 +330,39 @@ test('every button press is counted by label and sent to Admin > Mod', async ($,
   expect(JSON.parse(bodies[1]!)).toEqual({ presses: { Settings: 2 } })
   await ui.unmount()
 })
+
+test('a prompt notice: its button fills the prompt box with the team\'s prompt, then the notice goes away', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const events: string[] = []
+  const prompt = 'Review my CLAUDE.md, skills and settings for what the newest Claude model changes.\nShow me each change first.'
+  const clock = engine(on, [{ id: 'p1', kind: 'prompt', message: 'A new Claude model is out. Run this to see how it can improve your setup.', link_label: 'Copy prompt below', link_href: '', prompt: `${prompt}\u0007` }], events)
+  const filled: string[] = []
+  on('prompt.fill', (_, e) => {
+    filled.push(e.text)
+    return { isFilled: true, text: e.text, cursor: e.text.length }
+  })
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Text', text: /A new Claude model is out/ })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'notice-prompt-p1' }))?.text).toBe('Copy prompt below')
+  await ui.press({ key: 'notice-prompt-p1' })
+  // The prompt exactly as written, new lines kept, control characters gone. Nothing is sent: the member presses Enter.
+  expect(filled[0]).toBe(prompt)
+  expect(await ui.find({ type: 'Text', text: /A new Claude model is out/ })).toBeUndefined()
+  await ui.unmount()
+  await clock.advance(1)
+  expect(events.some(b => b.includes('notice_clicked') && b.includes('"p1"'))).toBe(true)
+})
+
+test('a prompt notice with no prompt is not shown', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [{ id: 'p2', kind: 'prompt', message: 'Run this', link_label: 'Copy prompt below', link_href: '', prompt: '' }])
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Button', key: 'notice-prompt-p2' })).toBeUndefined()
+  await ui.unmount()
+})

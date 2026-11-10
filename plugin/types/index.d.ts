@@ -119,13 +119,15 @@ export type AuditRun = {
 /** A notification the BuildPartner.ai team sent to the bar (Admin > Mod, GET /api/buildpartner/mod/notices). */
 export type TeamNotice = {
   id: string
-  /** 'video' is a new video from Austin: a play mark, and the button opens it. */
-  kind: 'message' | 'video'
+  /** 'video' is a new video from Austin: a play mark, and the button opens it. 'prompt': the button fills the prompt box with `prompt`. */
+  kind: 'message' | 'video' | 'prompt'
   message: string
   /** The button's label; '' for no button. */
   linkLabel: string
-  /** http(s) only; '' for no button. */
+  /** http(s) only; '' for no button, and always '' on a prompt notice. */
   linkHref: string
+  /** The prompt a 'prompt' notice hands the member. Missing on notices stored before it existed. */
+  prompt?: string
 }
 
 declare module 'claude-code' {
