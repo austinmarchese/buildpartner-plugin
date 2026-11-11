@@ -623,7 +623,7 @@ async function showSuggestions($: Dollar): Promise<void> {
   const list = await attempt(() => read($, pending), [] as ReflectPattern[])
   // Nothing waiting: say so at once, without starting a Claude reply.
   if (list.length === 0) {
-    $.ui.toast(`${NAME}: nothing waiting. New suggestions show up in the bar.`)
+    $.ui.toast(`${NAME}: nothing waiting. New suggestions show up in the mod.`)
     return
   }
   // The command has Claude read this file. Arguments show raw in the member's message, so they
@@ -760,7 +760,7 @@ async function readPast($: Dollar): Promise<string> {
   const ready = (await attempt(() => read($, pending), [] as ReflectPattern[])).length
   const sessions = `Read ${read_} past session${read_ === 1 ? '' : 's'}`
   // Nothing found is a result too: say so, and where the next suggestion will show.
-  if (ready === 0) return `${sessions}. Nothing to fix. New suggestions show above the bar as you work.`
+  if (ready === 0) return `${sessions}. Nothing to fix. New suggestions show in the mod as you work.`
   return `${sessions}: ${ready} suggestion${ready === 1 ? '' : 's'} ready.`
 }
 
@@ -1654,7 +1654,7 @@ async function setTestState($: Dollar, key: string): Promise<string> {
   // The rows show above the bar: put the settings away and start at the first one.
   await update($, isExpanded, () => false)
   await update($, rowAt, () => 0)
-  return `${done.join(', ')} above the bar. Every button works for real.`
+  return `${done.join(', ')} in the mod. Every button works for real.`
 }
 
 // ---- The row above the bar ----
@@ -2263,7 +2263,7 @@ async function ownTool($: Dollar, e: { tool: string; input: unknown }): Promise<
         .slice(0, 5)
         .map(p => `- ${p.target}: ${p.change}`)
         .join('\n')
-      return { result: `${line}${top ? `\nPending suggestions (the member accepts with Apply in the ${NAME} bar):\n${top}` : ''}` }
+      return { result: `${line}${top ? `\nPending suggestions (the member accepts with Apply in the ${NAME} mod):\n${top}` : ''}` }
     }
     return { result: '' }
   }
@@ -2327,7 +2327,7 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
       const now = await $.clock.now()
       map[DEMO.id] = { ...DEMO, firstSeen: now, lastSeen: now }
       await saveLedger($, map)
-      return { text: `${NAME}: a demo suggestion is above the bar. /${$.plugin.name}:plugin demo clear removes it.` }
+      return { text: `${NAME}: a demo suggestion is in the mod. /${$.plugin.name}:plugin demo clear removes it.` }
     }
     if (verb === 'test') {
       if (!isDevBuild($)) return { text: `${NAME}: test states are for dev builds only.` }
@@ -2344,7 +2344,7 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
     }
     if (verb === 'welcome') {
       await resetFirstRun($)
-      return { text: `${NAME}: back to a new member's first run. The welcome card is above the bar.` }
+      return { text: `${NAME}: back to a new member's first run. The welcome card is in the mod.` }
     }
     if (verb === 'notices') {
       if (arg === 'reset') await attempt(() => $.store.set('dismissedNotices', []), undefined)
@@ -2363,10 +2363,10 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
       return { text: await review($, 'asked') }
     }
     // Anything else typed after the command (a note dictated after a filled-in command, a typo) changes nothing.
-    if (verb) return { text: `${NAME}: "${verb.slice(0, 30)}" is not one of its commands, so nothing changed. Use the ▼ on the bar above the prompt.` }
+    if (verb) return { text: `${NAME}: "${verb.slice(0, 30)}" is not one of its commands, so nothing changed. Use the ▼ on the mod above the prompt.` }
     const open = await update($, isExpanded, v => !v)
     if (open) $.clock.after(0, () => void attempt(() => refreshHealth($), undefined))
-    return { text: `${NAME}: bar ${open ? 'expanded' : 'collapsed'}.` }
+    return { text: `${NAME}: mod ${open ? 'expanded' : 'collapsed'}.` }
   }
 }
 
@@ -2388,7 +2388,7 @@ async function turnOffMod($: Dollar): Promise<void> {
   await saveSettings($, { enabled: false, hidden: true })
   await update($, isExpanded, () => false)
   $.clock.after(0, () => void attempt(() => reportEvent($, 'bar_hidden'), undefined))
-  $.ui.toast(`${NAME}: bar hidden and the Self-Improving System paused. /${$.plugin.name}:plugin show brings both back.`)
+  $.ui.toast(`${NAME}: mod hidden and the Self-Improving System paused. /${$.plugin.name}:plugin show brings both back.`)
 }
 
 /** "2d ago", or "never" for a missing time. */
@@ -2629,19 +2629,19 @@ function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
           row('set-expert', 'Expert Advice', EXPERT_ON_LINE, toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true }))),
           <Box key="settings-footer" flexDirection="row" flexWrap="wrap" columnGap={2}>
             <Button key="dashboard" plain label="Open dashboard" onPress={click($, 'open', 'Open dashboard', () => openDashboard($))} />
-            <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai bar'} onPress={click($, 'bar', 'Hide the bar', () => turnOffMod($))} />
+            <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai mod'} onPress={click($, 'bar', 'Hide the bar', () => turnOffMod($))} />
           </Box>,
         ])}
         {v.dev
           ? section('d-debug', 'Debug', 'dev build only', [
               // Same rows as every section: the name bold on the left, the value dim beside it.
-              ...[...debugLines(v), ['Above the bar', aboveTheBar($, v)] as [string, string]].map(([name, value]) => (
+              ...[...debugLines(v), ['In the mod', aboveTheBar($, v)] as [string, string]].map(([name, value]) => (
                 <Text key={`dbg-${name}`} wrap="wrap">
                   <Text bold>{name}</Text>
                   <Text dimColor> {value}</Text>
                 </Text>
               )),
-              row('dbg-test', 'Test a state', 'Puts the bar in that state for real on this machine, so every button works. Clear test states undoes it.', ''),
+              row('dbg-test', 'Test a state', 'Puts the mod in that state for real on this machine, so every button works. Clear test states undoes it.', ''),
               <Box key="dbg-tests" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
                 {TEST_STATES.map(t => (
                   <Button key={`ts-${t.key}`} label={t.label} onPress={click($, 'bar', t.label, async () => $.ui.toast(`${NAME}: ${await setTestState($, t.key)}`))} />

@@ -162,7 +162,7 @@ test('a review that finds nothing says so, and where the next suggestion shows',
   on('session.id', () => ({ value: 'live' }))
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
   const out = (await $.command.run({ command: 'buildpartner:plugin', args: 'scan' } as never)) as { text?: string }
-  expect(out.text ?? '').toContain('Nothing to fix. New suggestions show above the bar as you work.')
+  expect(out.text ?? '').toContain('Nothing to fix. New suggestions show in the mod as you work.')
   expect(out.text ?? '').not.toContain('0 suggestions')
 })
 
@@ -196,7 +196,7 @@ test('each feature has its button in Features and its switch under Settings, wit
   expect(await ui.find({ type: 'Text', text: /Suggests an expert when you face a key decision/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'coach-toggle-selfOn' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'coach-toggle-expertOn' })).toBeDefined()
-  expect((await ui.find({ type: 'Button', key: 'turn-off-mod' }))?.text).toBe('Hide the BuildPartner.ai bar')
+  expect((await ui.find({ type: 'Button', key: 'turn-off-mod' }))?.text).toBe('Hide the BuildPartner.ai mod')
   expect(await ui.find({ type: 'Text', text: /Show in the bar/ })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'show-self' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'now' })).toBeUndefined()

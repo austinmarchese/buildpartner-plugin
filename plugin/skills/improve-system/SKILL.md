@@ -29,7 +29,7 @@ Keep your system sharp. One skill, six modes. Detect the right mode from convers
 | Mode | Trigger | What it does |
 |------|---------|-------------|
 | **Improve** | Bare invocation in a project that has skills of its own, "improve my system", "run my self-improving system", "run the loop". The argument `routine` (started by a routine with nobody watching) or `apply`. | Reads how you have worked here since the last run, makes the small fixes on its own, and asks you about each bigger improvement to your skills and CLAUDE.md before making it. |
-| **Apply suggestions** | The argument starts with "Apply these Self-Improving System suggestions" (the BuildPartner.ai bar's Apply button). | Makes each listed change in this project, showing each edit before writing it. |
+| **Apply suggestions** | The argument starts with "Apply these Self-Improving System suggestions" (the BuildPartner.ai mod's Apply button). | Makes each listed change in this project, showing each edit before writing it. |
 | **Setup Review** | Default for new users, "review my setup", "how's my setup". | Full audit of your Claude Code environment with prioritized action items. |
 | **Experience Capture** | "capture this", "log this", user describes a win/lesson. | Quick structured entry written to knowledge folder. |
 | **Session Review** | "recap my week", "what did I do", bare invocation for returning users. | Weekly recap from session history and git log. |
@@ -594,7 +594,7 @@ Save `state.json`: `last_run_at` (the time this run started, unchanged with `app
 
 ### Mode 6: Apply suggestions
 
-The BuildPartner.ai bar's Apply button fills the prompt with "Apply these Self-Improving System suggestions, and show me each edit before you write it:" followed by one line per suggestion: the target, its kind, the change, and what the user said that prompted it. The user already said yes in the bar.
+The BuildPartner.ai mod's Apply button fills the prompt with "Apply these Self-Improving System suggestions, and show me each edit before you write it:" followed by one line per suggestion: the target, its kind, the change, and what the user said that prompted it. The user already said yes in the bar.
 
 1. **Where the change lands**: Step 1 of Mode 5.
 2. **For each line, in order**: show the edit, then make it, inside this project only, the same way as Mode 5 Step 6 (a rule goes in `CLAUDE.md`, a skill update edits that one skill, a new skill is created and never overwrites one that exists). If the user stops one, skip it.
