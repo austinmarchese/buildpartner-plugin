@@ -14,9 +14,11 @@
 // Self-improving: at turn ends (every N main-loop turns, or right after the
 // member corrects Claude) one model call reads the slice of conversation since
 // the last review and names system lessons. Each lesson is a pattern in a
-// ledger kept across sessions. A pattern becomes a suggestion only once it has
-// shown up in 3 sessions, or once the member explicitly corrected Claude about
-// it. The coach itself never edits a file and never sends a prompt.
+// ledger kept across sessions. A pattern becomes a suggestion once it passes
+// the bar for the reviewer's confidence in it (BAR below): a high confidence
+// lesson the first time it comes up, a medium one after 2 sessions or 2
+// corrections, a low one never. The coach itself never edits a file and never
+// sends a prompt.
 //
 // The literal 'buildpartner' in every state ref is this plugin's name.
 // deploy-dev-plugin.sh rewrites it to 'bp-dev' for the dev plugin.
@@ -27,7 +29,11 @@ import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPl
 
 type Dollar = EngineInterface
 
-const SESSIONS_BAR = 3
+// When a lesson becomes a suggestion: the sessions it must have come up in, or the times the
+// member corrected Claude about it (either is enough), per confidence. Low confidence never shows.
+// Tuned on Admin > Tools > Evals, which reads these numbers as "shipped": change them there first,
+// on real history, then here.
+const BAR = { highSessions: 1, highCorrections: 1, mediumSessions: 2, mediumCorrections: 2 }
 // Most suggestions waiting at once: a short list the member actually goes through.
 const MAX_WAITING = 3
 const DEFAULTS = { enabled: true, hidden: false, every: 15, model: 'opus', selfOn: true, expertOn: true }
@@ -488,19 +494,18 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
         lastSeen: now,
         status: before?.status ?? 'watching',
       }
-      // High signal: a suggestion the member is likely to apply, not filler. Rule of thumb: it has
-      // come up at least twice (two corrections, or two sessions) before the member sees it.
-      // - high confidence: twice;
-      // - medium: three separate sessions, or two corrections;
+      // High signal: a suggestion the member is likely to apply, not filler (BAR, above).
+      // - high confidence: the first time it comes up;
+      // - medium: two separate sessions, or two corrections;
       // - low: never shown, it only keeps counting.
       // The member never sees the confidence, only the suggestion.
       // And at most MAX_WAITING suggestions wait at once; the rest keep counting until there is room.
       const c = item.confidence ?? 'low'
       const earns =
         c === 'high'
-          ? entry.corrections >= 2 || entry.sessions.length >= 2
+          ? entry.corrections >= BAR.highCorrections || entry.sessions.length >= BAR.highSessions
           : c === 'medium'
-            ? entry.sessions.length >= SESSIONS_BAR || entry.corrections >= 2
+            ? entry.sessions.length >= BAR.mediumSessions || entry.corrections >= BAR.mediumCorrections
             : false
       const waiting = Object.values(map).filter(x => x.status === 'suggested').length + promoted.length
       if (entry.status === 'watching' && earns && waiting < MAX_WAITING) {
@@ -509,7 +514,7 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
       }
       map[id] = entry
       lines.push(
-        `- [${entry.status} ${entry.sessions.length}/${SESSIONS_BAR}${entry.corrections ? `, corrected ${entry.corrections}x` : ''}] ${target}: ${entry.change}`,
+        `- [${entry.status} ${entry.sessions.length}/${BAR.mediumSessions}${entry.corrections ? `, corrected ${entry.corrections}x` : ''}] ${target}: ${entry.change}`,
       )
     }
 
@@ -581,7 +586,7 @@ const TYPE_LABEL: Record<string, string> = {
 }
 
 function why(p: ReflectPattern): string {
-  return p.corrections ? 'You corrected Claude about this' : `Came up in ${p.sessions.length} separate sessions`
+  return p.corrections ? 'You corrected Claude about this' : `Came up in ${p.sessions.length} separate session${p.sessions.length === 1 ? '' : 's'}`
 }
 
 /** The pending suggestions as markdown: the file a walk-through attaches, and what Claude reads. */
@@ -1723,7 +1728,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
       header: kind.label,
       context: targetLabel(p.target),
       text: changeText(p.change),
-      sub: `${p.corrections ? 'From your correction' : `Came up in ${p.sessions.length} sessions`}: "${cut(p.evidence, 120)}"`,
+      sub: `${p.corrections ? 'From your correction' : `Came up in ${p.sessions.length} session${p.sessions.length === 1 ? '' : 's'}`}: "${cut(p.evidence, 120)}"`,
       primary: { key: `card-apply-${p.id}`, label: kind.action, kind: 'prompt', onPress: () => apply($, p.id) },
       secondary: { key: `card-dismiss-${p.id}`, label: kind.decline, kind: 'bar', onPress: () => dismiss($, p.id) },
     })
