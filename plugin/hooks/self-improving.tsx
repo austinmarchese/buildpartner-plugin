@@ -961,7 +961,8 @@ async function refreshPlan($: Dollar): Promise<void> {
 // ---- Notifications from the team (Admin > Mod) ----
 
 // Dismissed ids kept on this machine so Dismiss is instant; the server also drops
-// a dismissed notice from GET notices (its notice_dismissed event), for a second machine.
+// a notice this member dismissed or clicked from GET notices (its notice_dismissed or
+// notice_clicked event), so it stays away on a second machine and after a lost store.
 const DISMISSED_KEEP = 200
 
 async function dismissedNotices($: Dollar): Promise<string[]> {
@@ -1053,7 +1054,7 @@ function noteSeen($: Dollar, n: TeamNotice | null): void {
   $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_seen', n.id), undefined))
 }
 
-/** Hides a notice for good on this machine (every window: see syncDismissed). `report` false when a click hid it, so Admin > Mod counts it as clicked, not dismissed. */
+/** Hides a notice for good on this machine (every window: see syncDismissed). `report` false when a click hid it, so Admin > Mod counts it as clicked, not dismissed; the server puts a clicked notice away too. */
 async function dismissNotice($: Dollar, id: string, report = true): Promise<void> {
   if (report) $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_dismissed', id), undefined))
   const kept = (await dismissedNotices($)).filter(x => x !== id)

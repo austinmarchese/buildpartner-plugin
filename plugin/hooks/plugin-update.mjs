@@ -4,8 +4,15 @@ import { BP_DIR, ensureDir } from "./_util.mjs";
 
 const THROTTLE_MS = 60 * 60 * 1000; // 1 hour
 const THROTTLE_FILE = `${BP_DIR}/last-update-check`;
+// A member who wants to pin their version (e.g. a client-work machine) creates
+// this file. While it exists the plugin never updates itself; they update by
+// hand with `claude plugin marketplace update buildpartner` then
+// `claude plugin update buildpartner@buildpartner`. Delete it to resume.
+const PIN_FILE = `${BP_DIR}/no-auto-update`;
 
 try {
+  if (fs.existsSync(PIN_FILE)) process.exit(0);
+
   // Check throttle
   if (fs.existsSync(THROTTLE_FILE)) {
     const stat = fs.statSync(THROTTLE_FILE);

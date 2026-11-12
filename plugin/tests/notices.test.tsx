@@ -77,6 +77,35 @@ test('a notice from the team shows above the bar until dismissed', async ($, on)
   await again.unmount()
 })
 
+test('pressing a notice\'s button puts it away like Dismiss: clicked once, gone on the next check', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const events: string[] = []
+  const clock = engine(on, [NOTICE], events)
+  const opened: string[] = []
+  on('process.run', (_, e) => {
+    opened.push(e.argv[e.argv.length - 1] ?? '')
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect((await ui.find({ type: 'Button', key: 'notice-open-n1' }))?.text).toBe('Watch')
+  await ui.press({ key: 'notice-open-n1' })
+  expect(opened).toContain(NOTICE.link_href)
+  expect(await ui.find({ type: 'Text', text: /New video from Austin/ })).toBeUndefined()
+  await ui.unmount()
+  await clock.advance(1)
+  // Admin > Mod counts it as clicked, not dismissed; the server puts a clicked notice away as well.
+  expect(events.some(b => b.includes('notice_clicked') && b.includes('"n1"'))).toBe(true)
+  expect(events.some(b => b.includes('notice_dismissed'))).toBe(false)
+  // The next check (this session, or the next one on this machine) does not bring it back.
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
+  const again = await $.ui.mount(BAND('desktop'))
+  expect(await again.find({ type: 'Text', text: /New video from Austin/ })).toBeUndefined()
+  await again.unmount()
+})
+
 test('two notices show one at a time, 1 of 2, and Next steps to the other', async ($, on) => {
   mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
