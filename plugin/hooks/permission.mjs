@@ -27,6 +27,7 @@ import { debug } from "./_util.mjs";
 const QUIET_TOOLS = new Set([
   "get_expert_knowledge",
   "get_build",
+  "get_audit",
   "get_founder_knowledge",
   "request_founder_knowledge",
   "social_intel",
