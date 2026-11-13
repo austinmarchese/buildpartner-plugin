@@ -166,3 +166,84 @@ test('the expanded bar has a collapse button at its bottom, and it closes the pa
   expect(await ui.find({ type: 'Text', text: /^Settings$/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('out of free runs, the expert question waits: only the upgrade row asks, and each row keeps its own button', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  await state($, 'expert')
+  const ui = await $.ui.mount(BAND('desktop'))
+  // One row, not "1 of 2": the upgrade row alone, with See plans.
+  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
+  expect(await ui.find({ type: 'Button', key: 'ask-expert-nudge' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'row-next' })).toBeUndefined()
+  // Not now on the upgrade row does not bring back an expert row that would lead to the same page.
+  await ui.press({ key: 'skip-upgrade' })
+  expect(await ui.find({ type: 'Button', key: 'ask-expert-nudge' })).toBeUndefined()
+  await ui.unmount()
+})
+
+const RUN_FAILS = { value: { exitCode: 1, stdout: '', stderr: 'no browser', isStdoutTruncated: false, isStderrTruncated: false } }
+
+test('See plans with no browser to open: the prompt fills with the open-dashboard command for the plans page, no token', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  const ran: string[][] = []
+  const filled: string[] = []
+  on('process.run', (_, e) => (ran.push([...e.argv]), RUN_FAILS))
+  on('prompt.read', () => ({ value: { text: '' } }) as never)
+  on('prompt.fill', (_, e) => {
+    filled.push(e.text)
+    return { isFilled: true, text: e.text, cursor: e.text.length }
+  })
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => (toasts.push(String((e as { text?: unknown }).text ?? '')), { value: undefined }))
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  const reports: string[] = []
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/errors')
+      ? (reports.push(String(e.init?.body ?? '')), { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } })
+      : e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  await ui.press({ key: 'upgrade-bar' })
+  // Every opener was tried with the signed-in plans page, then the catch-all.
+  expect(ran.map(a => a[0])).toEqual(['open', 'xdg-open', 'cmd'])
+  expect(ran[0]?.[1]).toBe('https://example.test/dashboard?upgrade=true&t=t')
+  expect(filled).toEqual(["/bp-dev:open-dashboard /dashboard?upgrade=true"])
+  expect(toasts.some(t => /Press Enter and Claude opens the page/.test(t))).toBe(true)
+  // The team hears about it in Slack, with what each opener said and no sign-in token.
+  await clock.advance(1)
+  expect(reports).toHaveLength(1)
+  const sent = JSON.parse(reports[0] as string) as { action: string; detail: string }
+  expect(sent.action).toBe('browser did not open')
+  expect(sent.detail).toContain('https://example.test/dashboard')
+  expect(sent.detail).toContain('open exit 1 (no browser)')
+  expect(reports[0]).not.toContain('t=t')
+  // The upgrade row stays, so See plans can be pressed again.
+  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
+  await ui.unmount()
+})

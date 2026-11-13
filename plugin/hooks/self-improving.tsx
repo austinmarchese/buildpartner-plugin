@@ -1103,6 +1103,27 @@ async function reportEvent(
   )
 }
 
+/**
+ * A click that failed, sent to the team (the #errors Slack channel, through
+ * /api/buildpartner/mod/errors) with what went wrong. Sign-in tokens are cut out first.
+ * Fire and forget: a report that cannot be sent changes nothing for the member.
+ */
+function reportError($: Dollar, action: string, detail: string): void {
+  $.clock.after(0, () =>
+    void attempt(async () => {
+      const a = await auth($)
+      if (!a.token) return
+      const h = await attempt(() => read($, health), null)
+      const clean = (t: string) => t.replace(/([?&]t=)[^&\s"')]+/g, '$1…')
+      await $.http.fetch(`${a.apiBase}/api/buildpartner/mod/errors`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: clean(action), detail: clean(detail), version: h?.version ?? undefined, surface: lastSurface ?? undefined }),
+      })
+    }, undefined),
+  )
+}
+
 function noteSeen($: Dollar, n: TeamNotice | null): void {
   if (!n || seenReported.has(n.id)) return
   seenReported.add(n.id)
@@ -1132,11 +1153,8 @@ async function fillNotice($: Dollar, n: TeamNotice): Promise<void> {
 async function openNotice($: Dollar, n: TeamNotice): Promise<void> {
   if (!n.linkHref) return
   $.clock.after(0, () => void attempt(() => reportEvent($, 'notice_clicked', n.id), undefined))
-  if (!(await openUrl($, n.linkHref))) {
-    // Nothing opened: keep the notice so the link is still there to use.
-    $.ui.toast(`${NAME}: could not open a browser. The link is ${n.linkHref}`)
-    return
-  }
+  // Nothing opened: keep the notice; the prompt holds a request to open its link instead.
+  if (!(await openUrl($, n.linkHref))) return
   await dismissNotice($, n.id, false)
 }
 
@@ -1188,23 +1206,47 @@ async function openDashboard($: Dollar, path = '/dashboard'): Promise<void> {
   const a = await auth($)
   const sep = path.includes('?') ? '&' : '?'
   const url = a.token ? `${a.apiBase}${path}${sep}t=${a.token}` : `${a.apiBase}${path}`
-  if (!(await openUrl($, url))) $.ui.toast(`${NAME}: could not open a browser. Your dashboard is at ${a.apiBase}/dashboard`)
+  await openUrl($, url)
 }
 
 /** Ask the team (open): the contact form on BuildPartner.ai. No ?t= sign-in link: it is a public page. */
 async function askTeam($: Dollar): Promise<void> {
   const a = await auth($)
   const url = `${a.apiBase}/contact?topic=mod`
-  if (!(await openUrl($, url))) $.ui.toast(`${NAME}: could not open a browser. The contact form is at ${url}`)
+  await openUrl($, url)
 }
 
-/** Opens a link in the member's browser (macOS, Linux, Windows). False when none would open it. */
+/**
+ * Opens a link in the member's browser (macOS, Linux, Windows). When none of the system's
+ * openers works (Claude Code running where no browser is, or the opener refused), the catch-all
+ * fills the prompt with a request Claude can carry out: the open-dashboard command for a
+ * BuildPartner.ai page, else "Open <link> in my browser." Debug's Last error records what each
+ * opener answered. False when nothing opened.
+ */
 async function openUrl($: Dollar, url: string): Promise<boolean> {
+  const tried: string[] = []
   for (const argv of [['open', url], ['xdg-open', url], ['cmd', '/c', 'start', '', url]]) {
-    const r = await attempt(() => $.process.run(argv, { timeoutMs: 10_000 }), null)
-    if (r && r.exitCode === 0) return true
+    try {
+      const r = await $.process.run(argv, { timeoutMs: 10_000 })
+      if (r.exitCode === 0) return true
+      tried.push(`${argv[0]} exit ${r.exitCode}${r.stderr.trim() ? ` (${cut(r.stderr.trim().split('\n').pop() ?? '', 80)})` : ''}`)
+    } catch (err) {
+      tried.push(`${argv[0]}: ${cut(err instanceof Error ? err.message : String(err), 80)}`)
+    }
   }
+  const now = await attempt(() => $.clock.now(), 0)
+  await attempt(() => update($, lastError, () => `${new Date(now).toISOString().slice(11, 19)} · browser did not open: ${tried.join('; ')}`), undefined)
+  reportError($, 'browser did not open', `${url.replace(/[?#].*$/, '')}\n${tried.join('\n')}`)
+  if (await handOver($, openRequest(url), 'prepend')) $.ui.toast(`${NAME}: your browser didn't open from here. Press Enter and Claude opens the page.`)
   return false
+}
+
+/** What the catch-all puts in the prompt: a dashboard page by its path (never the sign-in token), anything else by its link. */
+function openRequest(url: string): string {
+  const m = /^https?:\/\/[^/]+(\/dashboard[^#]*)/.exec(url)
+  if (!m) return `Open ${url} in my browser.`
+  const page = (m[1] as string).replace(/([?&])t=[^&]*&?/, '$1').replace(/[?&]$/, '')
+  return page === '/dashboard' ? '/bp-dev:open-dashboard' : `/bp-dev:open-dashboard ${page}`
 }
 
 // ---- AI Audit: how far a run is, above the bar ----
@@ -1316,10 +1358,7 @@ async function openAuditChart($: Dollar): Promise<void> {
   const raw = h ? await attempt(() => $.fs.read(`${h}/${AUDIT_FILE}`), '') : ''
   const link = typeof raw === 'string' && raw.trim() ? `${page}#import=${base64url(raw)}` : page
   // A link too long for the system's opener still gets them to the page (the examples stay in Claude Code).
-  if (!(await openUrl($, link)) && (link === page || !(await openUrl($, page)))) {
-    $.ui.toast(`${NAME}: could not open a browser. Your chart is at ${page}`)
-    return
-  }
+  if (!(await openUrl($, link)) && (link === page || !(await openUrl($, page)))) return
   await putAuditAway($)
 }
 
@@ -1573,6 +1612,7 @@ function click($: Dollar, _kind: Kind, label: string, fn: () => unknown): () => 
       const msg = err instanceof Error ? err.message : String(err)
       const at = new Date(await attempt(() => $.clock.now(), 0)).toISOString().slice(11, 19)
       await attempt(() => update($, lastError, () => `${at} · ${label}: ${msg}`), '')
+      reportError($, `${label} did not work`, msg)
       $.ui.toast(`${NAME}: ${label} did not work (${msg}).`)
     }
   }
@@ -1767,13 +1807,15 @@ function rowsAbove($: Dollar, v: View): Row[] {
   const run = auditRow($, v)
   if (run) rows.push(run)
   const out = isOutOfRuns(v.plan)
-  if (v.ex && v.enabled && v.expertOn) {
+  // Out of free runs, the expert question waits: the upgrade row is the one ask, and Ask the
+  // expert would only lead to the same upgrade page. It shows again once the member has runs.
+  if (v.ex && v.enabled && v.expertOn && !out) {
     rows.push({
       key: 'coach-nudge',
       icon: 'bulb',
       header: 'Expert Advice',
       text: `Before you decide on ${v.ex.topic ?? 'this'}, an expert framework could change the answer.`,
-      primary: { key: 'ask-expert-nudge', label: out ? 'See plans' : 'Ask the expert', kind: out ? 'open' : 'prompt', onPress: () => askExpert($) },
+      primary: { key: 'ask-expert-nudge', label: 'Ask the expert', kind: 'prompt', onPress: () => askExpert($) },
       secondary: { key: 'skip-expert', label: 'Not now', kind: 'bar', onPress: () => skipExpert($) },
     })
   }
