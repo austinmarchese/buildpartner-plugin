@@ -160,6 +160,7 @@ declare module 'claude-code' {
       rowAt: number
       upgradeSkipped: boolean
       audit: Shaped<AuditRun | null>
+      rolloutOn: boolean
     }
   }
 }

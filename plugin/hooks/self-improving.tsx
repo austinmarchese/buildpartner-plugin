@@ -93,6 +93,9 @@ const rowAt = atom({ plugin: 'bp-dev', key: 'rowAt' } as const, 0)
 const isWelcomed = atom({ plugin: 'bp-dev', key: 'isWelcomed' } as const, true)
 // An AI Audit run in this session: how far it is, read from the file the audit writes. null when none.
 const audit = atom({ plugin: 'bp-dev', key: 'audit' } as const, null as AuditRun | null, { shape: 'au-1' })
+// Whether the BuildPartner.ai team has the mod on for this install (Admin > Mod > Rollout). False:
+// the mod is fully dormant. Set from the store at session start, then from the server (refreshRollout).
+const rolloutOn = atom({ plugin: 'bp-dev', key: 'rolloutOn' } as const, true)
 
 type Settings = typeof DEFAULTS
 
@@ -1072,6 +1075,37 @@ async function refreshNotices($: Dollar): Promise<void> {
   await update($, notices, () => list)
 }
 
+/** The mod is on for this install: the server's last answer (Admin > Mod > Rollout). True until told otherwise. */
+async function isOn($: Dollar): Promise<boolean> {
+  return attempt(() => read($, rolloutOn), true)
+}
+
+/**
+ * Asks BuildPartner.ai whether the mod is on for this install, at session start and every hour.
+ * The answer is kept in the store (rolloutShow), so a failed ask uses the last one, and with none
+ * the mod shows. Turning on mid-session reads what the bar needs; turning off makes it dormant.
+ */
+async function refreshRollout($: Dollar): Promise<void> {
+  const a = await auth($)
+  // A signed-out dev build asks dev, like the install sign-in.
+  const base = a.token ? a.apiBase : isDevBuild($) ? 'https://dev.buildpartner.ai' : DEFAULT_API
+  const r = await attempt(() => $.http.fetch(`${base}/api/buildpartner/mod/rollout`, a.token ? { headers: { Authorization: `Bearer ${a.token}` } } : {}), null)
+  if (!r?.ok) return
+  const j = await attempt(async () => JSON.parse(r.text) as { show?: unknown }, null)
+  if (typeof j?.show !== 'boolean') return
+  const show = j.show
+  await attempt(() => $.store.set('rolloutShow', show), undefined)
+  const was = await isOn($)
+  if (was === show) return
+  if (!show) stop?.abort()
+  await update($, rolloutOn, () => show)
+  if (show) {
+    void attempt(() => refreshPlan($), undefined)
+    void attempt(() => refreshNotices($), undefined)
+    void attempt(() => findBpTools($), undefined)
+  }
+}
+
 const DECISION_EVENT: Partial<Record<ReflectPattern['status'], 'suggestion_shown' | 'suggestion_applied' | 'suggestion_dismissed'>> = {
   suggested: 'suggestion_shown',
   applied: 'suggestion_applied',
@@ -1480,6 +1514,8 @@ function short(target: string): string {
 
 // One name for the bar everywhere it shows.
 const NAME = 'BuildPartner.ai'
+// What a command or tool answers while the mod is not on for this install.
+const NOT_ON_YET = `${NAME}: the mod is not on for your account yet. It turns on by itself when it is.`
 
 // ---- pictures (desktop) ----
 
@@ -2168,6 +2204,7 @@ async function looksLikeCorrection($: Dollar, text: string): Promise<boolean> {
 
 /** The trigger check, off the turn's path: reads the conversation, decides, schedules. */
 async function afterTurn($: Dollar): Promise<void> {
+  if (!(await isOn($))) return
   if (!active) {
     // A desktop session can attach after start: wake once a surface draws us.
     if ((await $.session.surfaces()).length === 0) return
@@ -2227,6 +2264,9 @@ export const register: Register = on => {
       await update($, busySince, () => 0)
       const wasWelcomed = (await $.store.get('welcomed')) === true
       await update($, isWelcomed, () => wasWelcomed)
+      // The last rollout answer on this machine; none yet means show.
+      const lastShow = await $.store.get('rolloutShow')
+      await update($, rolloutOn, () => lastShow !== false)
       // Not now on "Free runs used up" holds for UPGRADE_QUIET_MS across sessions, so free members
       // are not asked every session. Pressing a paid tool while out still opens the upgrade page.
       const quietUntil = Number((await $.store.get('upgradeQuietUntil')) ?? 0)
@@ -2256,11 +2296,19 @@ export const register: Register = on => {
       })
       .catch(() => undefined)
     const done = await next(e)
-    $.clock.after(0, () => void attempt(() => findBpTools($), undefined))
+    $.clock.after(0, () =>
+      void attempt(async () => {
+        if (await isOn($)) await findBpTools($)
+      }, undefined),
+    )
     $.clock.after(0, () =>
       void attempt(async () => {
         // A fresh install signs itself in from its install code before anything reads the sign-in.
-        if (await attempt(() => signInFromInstallCode($), false)) {
+        const signedIn = await attempt(() => signInFromInstallCode($), false)
+        // Then whether the mod is on for this install. Until it answers, the stored answer holds.
+        await attempt(() => refreshRollout($), undefined)
+        if (!(await isOn($))) return
+        if (signedIn) {
           void attempt(() => refreshPlan($), undefined)
           void attempt(() => refreshNotices($), undefined)
         }
@@ -2268,24 +2316,43 @@ export const register: Register = on => {
         if (active) await pingActive($, lastSurface)
       }, undefined),
     )
-    $.clock.after(0, () => void attempt(() => refreshPlan($), undefined))
+    $.clock.after(0, () =>
+      void attempt(async () => {
+        if (await isOn($)) await refreshPlan($)
+      }, undefined),
+    )
     // The team's notices: read at start, then every hour in a session that stays open.
-    $.clock.after(0, () => void attempt(() => refreshNotices($), undefined))
+    $.clock.after(0, () =>
+      void attempt(async () => {
+        if (await isOn($)) await refreshNotices($)
+      }, undefined),
+    )
     // Dismiss in one window, gone from the others within seconds (local reads): notices, and suggestions.
     $.clock.every(10_000, () => {
       if (!active) return
-      void attempt(() => syncDismissed($), undefined)
-      void attempt(() => syncSuggestions($), undefined)
+      void attempt(async () => {
+        if (!(await isOn($))) return
+        void attempt(() => syncDismissed($), undefined)
+        void attempt(() => syncSuggestions($), undefined)
+      }, undefined)
     })
     let minutes = 0
+    let rolloutMinutes = 0
     $.clock.every(60_000, () => {
+      // Whether the mod is on is asked every hour even while dormant, so a change in
+      // Admin > Mod reaches an open session within the hour.
+      rolloutMinutes += 1
+      if (rolloutMinutes % 60 === 0) void attempt(() => refreshRollout($), undefined)
       if (!active) return
-      void attempt(() => update($, tick, n => n + 1), 0)
       minutes += 1
-      // A long-lived session catches up on the team's notices every hour, so a new one
-      // shows within the hour, and on the plan every 12 hours.
-      if (minutes % 60 === 0) void attempt(() => refreshNotices($), undefined)
-      if (minutes % (12 * 60) === 0) void attempt(() => refreshPlan($), undefined)
+      void attempt(async () => {
+        if (!(await isOn($))) return
+        await update($, tick, n => n + 1)
+        // A long-lived session catches up on the team's notices every hour, so a new one
+        // shows within the hour, and on the plan every 12 hours.
+        if (minutes % 60 === 0) void attempt(() => refreshNotices($), undefined)
+        if (minutes % (12 * 60) === 0) void attempt(() => refreshPlan($), undefined)
+      }, undefined)
     })
     return done
   })
@@ -2298,7 +2365,7 @@ export const register: Register = on => {
       pendingApplied = pendingApplied.filter(c => !sent.includes(c))
       await attempt(() => update($, appliedNow, list => [...list, ...sent.filter(c => !list.includes(c))].slice(-20)), undefined)
     }
-    if (!e.isMeta && !e.command) {
+    if (!e.isMeta && !e.command && (await isOn($))) {
       const m = /^\s*remember:\s*([\s\S]+)$/i.exec(e.text)
       if (m?.[1]) await attempt(() => remember($, m[1] as string), undefined)
       // An AI Audit prompt: its row shows above the bar from the start. The prompt goes to Claude untouched.
@@ -2310,7 +2377,7 @@ export const register: Register = on => {
   // Before a compaction folds the conversation away, review what has not been read yet. It reads
   // the messages now and reviews them in the background: the compaction never waits on the model.
   on('session.compact', async ($, e, next) => {
-    if (e.agentId === undefined && active && (await attempt(() => read($, isEnabled), false)) && (await attempt(async () => (await settings($)).selfOn, false))) {
+    if (e.agentId === undefined && active && (await isOn($)) && (await attempt(() => read($, isEnabled), false)) && (await attempt(async () => (await settings($)).selfOn, false))) {
       const msgs = await attempt(async () => (await $.session.messages()) as unknown as Msg[], null)
       if (msgs) $.clock.after(0, () => void attempt(() => review($, 'compact', undefined, msgs), ''))
     }
@@ -2345,6 +2412,7 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const ours = e.tool === `mcp__${$.plugin.name}__resolve_suggestion` || e.tool === `mcp__${$.plugin.name}__review_now`
     if (!ours) {
+      if (!(await isOn($))) return next(e)
       // The tool's arguments sit beside `tool` on the event (e.url for WebFetch).
       const call = e as unknown as { tool: string } & Record<string, unknown>
       $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call), undefined))
@@ -2360,6 +2428,7 @@ export const register: Register = on => {
       return done
     }
     try {
+      if (!(await isOn($))) return { result: NOT_ON_YET }
       return await ownTool($, e as unknown as { tool: string; input: unknown })
     } catch {
       return { result: `${NAME}: that did not work. Try again in a moment.` }
@@ -2373,6 +2442,7 @@ export const register: Register = on => {
   on('command.run', async ($, e, next) => {
     if (e.command !== `${$.plugin.name}:plugin`) return next(e)
     try {
+      if (!(await isOn($))) return { text: NOT_ON_YET }
       return await barCommand($, e)
     } catch {
       return { text: `${NAME}: that did not work. Try again in a moment.` }
@@ -2381,7 +2451,7 @@ export const register: Register = on => {
 
   // /bp-dev:plugin suggestions: the row in the conversation, drawn as a card.
   on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
-    if (e.props.command !== `${$.plugin.name}:plugin` || e.props.args.trim() !== 'suggestions') return next(e)
+    if (e.props.command !== `${$.plugin.name}:plugin` || e.props.args.trim() !== 'suggestions' || !(await isOn($))) return next(e)
     try {
       const list = await read($, pending)
       const D = $.ui.resolve(e)
@@ -2394,6 +2464,8 @@ export const register: Register = on => {
   // The bar: one slim row, always there, so the mod is visibly running.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
+    // Not on for this install yet (Admin > Mod > Rollout): the mod draws nothing.
+    if (!(await isOn($))) return next(e)
     // Being drawn means a surface exists: a desktop session that attached after start wakes here.
     active = true
     lastSurface = e.surface
