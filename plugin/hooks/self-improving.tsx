@@ -1181,6 +1181,13 @@ async function openDashboard($: Dollar, path = '/dashboard'): Promise<void> {
   if (!(await openUrl($, url))) $.ui.toast(`${NAME}: could not open a browser. Your dashboard is at ${a.apiBase}/dashboard`)
 }
 
+/** Ask the team (open): the contact form on BuildPartner.ai. No ?t= sign-in link: it is a public page. */
+async function askTeam($: Dollar): Promise<void> {
+  const a = await auth($)
+  const url = `${a.apiBase}/contact`
+  if (!(await openUrl($, url))) $.ui.toast(`${NAME}: could not open a browser. The contact form is at ${url}`)
+}
+
 /** Opens a link in the member's browser (macOS, Linux, Windows). False when none would open it. */
 async function openUrl($: Dollar, url: string): Promise<boolean> {
   for (const argv of [['open', url], ['xdg-open', url], ['cmd', '/c', 'start', '', url]]) {
@@ -2692,6 +2699,7 @@ function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
           // On means it runs by itself: the line says so, because flipping a switch starts nothing the member can see.
           row('set-self', 'Self-Improving System', SELF_ON_LINE, toggle('coach-toggle-selfOn', v.selfOn, () => saveSettings($, v.selfOn ? { selfOn: false } : { selfOn: true, enabled: true }))),
           row('set-expert', 'Expert Advice', EXPERT_ON_LINE, toggle('coach-toggle-expertOn', v.expertOn, () => saveSettings($, v.expertOn ? { expertOn: false } : { expertOn: true, enabled: true }))),
+          row('set-questions', 'Questions?', `Send the ${NAME} team a message.`, <Button key="ask-team" label="Ask the team" onPress={click($, 'open', 'Ask the team', () => askTeam($))} />),
           <Box key="settings-footer" flexDirection="row" flexWrap="wrap" columnGap={2}>
             <Button key="dashboard" plain label="Open dashboard" onPress={click($, 'open', 'Open dashboard', () => openDashboard($))} />
             <Button key="turn-off-mod" plain label={armed ? 'Press again to hide it' : 'Hide the BuildPartner.ai mod'} onPress={click($, 'bar', 'Hide the bar', () => turnOffMod($))} />

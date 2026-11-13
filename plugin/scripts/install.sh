@@ -510,7 +510,8 @@ INSTALL_STEP="marketplace"
 # ── Step 2: Install plugin via marketplace ────────────────────────
 echo -e "${BOLD}  [2/3] Installing plugin...${RESET}"
 
-# The catalog is a marketplace.json served over plain HTTPS whose plugins are
+# The catalog is a marketplace.json served over plain HTTPS from our own domain
+# (app/plugin/marketplace.json) whose plugins are
 # zips, so Claude Code needs no Git to install or update them. The deploy
 # scripts build both (scripts/build-plugin-archives.sh). The GitHub repo stays
 # as the fallback, used only when Git actually works on this machine.
@@ -521,14 +522,14 @@ if [ "$LOCAL_MODE" = true ]; then
   REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
   MARKETPLACE_SOURCE="./$REPO_DIR"
 elif echo "$API_BASE" | grep -q "dev\."; then
-  MARKETPLACE_SOURCE="https://raw.githubusercontent.com/$PLUGIN_REPO/dev/hosted/marketplace.json"
+  MARKETPLACE_SOURCE="$API_BASE/plugin/marketplace.json"
   GIT_FALLBACK_SOURCE="$PLUGIN_REPO#dev"
   # deploy-dev-plugin.sh brands the dev plugin as bp-dev (name + marketplace),
   # so install it under that id. Prod stays buildpartner@buildpartner below.
   MARKETPLACE_NAME="bp-dev"
   PLUGIN_NAME="bp-dev"
 else
-  MARKETPLACE_SOURCE="https://raw.githubusercontent.com/$PLUGIN_REPO/main/hosted/marketplace.json"
+  MARKETPLACE_SOURCE="$API_BASE/plugin/marketplace.json"
   GIT_FALLBACK_SOURCE="$PLUGIN_REPO"
 fi
 # Testing hook: point the installer at another hosted catalog.
