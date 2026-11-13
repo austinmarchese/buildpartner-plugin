@@ -26,7 +26,7 @@ Open my dashboard in the browser, automatically signed in.
 6. Open the page, signed in, by running the system's opener on `BASE_URL` + the page + `?t=TOKEN_HERE` (`&t=TOKEN_HERE` when the page already has a `?`):
    - macOS: `open "URL"`
    - Linux: `xdg-open "URL"`
-   - Windows: `cmd /c start "" "URL"`
+   - Windows: `rundll32 url.dll,FileProtocolHandler "URL"` (keeps a link with `&` whole)
 
    Replace BASE_URL with the determined base URL and TOKEN_HERE with the actual token. Never show the token in your reply.
 

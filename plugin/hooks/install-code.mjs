@@ -7,8 +7,11 @@
 // trades the code for the login at POST /api/buildpartner/login/poll, the same
 // route the email login uses, which hands the login out exactly once.
 //
-// Does nothing when this machine already has a login (every curl install and
-// every existing member) or when no code was given. Never crashes Claude Code.
+// Does nothing when no code was given. When this machine already has a login (an
+// existing member who ran the /mods setup prompt) the code is still used up, so
+// /mods/setup sees the plugin connected and moves on instead of waiting until the
+// prompt expires; the login already on this machine stays as it is. Never crashes
+// Claude Code.
 
 import fs from "fs";
 import path from "path";
@@ -29,7 +32,8 @@ function apiBase() {
 
 try {
   const code = (process.env.CLAUDE_PLUGIN_OPTION_INSTALL_CODE || "").trim();
-  if (!code || readAuth()?.token) process.exit(0);
+  if (!code) process.exit(0);
+  const hasLogin = !!readAuth()?.token;
   if (!/^[a-f0-9]{64}$/.test(code)) {
     debug("install-code", "install code has the wrong shape, skipped");
     process.exit(0);
@@ -45,6 +49,11 @@ try {
   const data = await res.json().catch(() => ({}));
   if (data.status !== "approved" || !data.token) {
     debug("install-code", `install code not accepted (${data.status || res.status})`);
+    process.exit(0);
+  }
+  // Already signed in here: the code is used up (the setup page goes on), the login stays.
+  if (hasLogin) {
+    debug("install-code", "already signed in on this machine; install code used up, login kept");
     process.exit(0);
   }
 

@@ -21,7 +21,7 @@ type On = Parameters<typeof mock.store>[0]
 async function member($: { session: { start: (a: never) => Promise<unknown> } }, on: On, store: Record<string, unknown> = { welcomed: true, scanned: true }) {
   mock.store(on, store)
   mock.env(on, { HOME: '/home/m' })
-  mock.clock(on)
+  const clock = mock.clock(on)
   on('tool.register', () => ({ value: { tool: 'x' } }))
   // No past sessions on disk: the first-run review ends at once.
   on('fs.list', () => ({ value: [] }))
@@ -33,6 +33,7 @@ async function member($: { session: { start: (a: never) => Promise<unknown> } },
       : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  return clock
 }
 
 const state = ($: { command: { run: (a: never) => Promise<unknown> } }, key: string) => $.command.run({ command: 'buildpartner:plugin', args: `test ${key}` } as never)
@@ -136,7 +137,7 @@ test('Debug has a button per test state, and it sets the state for real', async 
   for (const key of ['first-run', 'suggestions', 'expert', 'tip', 'notices', 'audit', 'audit-done', 'everything', 'clear']) {
     expect(await ui.find({ type: 'Button', key: `ts-${key}` })).toBeDefined()
   }
-  expect(await ui.find({ type: 'Text', text: /^Above the bar$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^In the mod$/ })).toBeDefined()
   await ui.press({ key: 'ts-suggestions' })
   // The settings close so the row is in view.
   expect(await ui.find({ type: 'Button', key: 'ts-suggestions' })).toBeUndefined()
@@ -231,17 +232,17 @@ test('See plans with no browser to open: the prompt fills with the open-dashboar
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'upgrade-bar' })
   // Every opener was tried with the signed-in plans page, then the catch-all.
-  expect(ran.map(a => a[0])).toEqual(['open', 'xdg-open', 'cmd'])
+  expect(ran.map(a => a[0])).toEqual(['open', 'xdg-open', 'rundll32'])
   expect(ran[0]?.[1]).toBe('https://example.test/dashboard?upgrade=true&t=t')
   expect(filled).toEqual(["/bp-dev:open-dashboard /dashboard?upgrade=true"])
   expect(toasts.some(t => /Press Enter and Claude opens the page/.test(t))).toBe(true)
-  // The team hears about it in Slack, with what each opener said and no sign-in token.
+  // The team hears about it in Slack: which page and how each opener failed, nothing personal.
   await clock.advance(1)
   expect(reports).toHaveLength(1)
   const sent = JSON.parse(reports[0] as string) as { action: string; detail: string }
   expect(sent.action).toBe('browser did not open')
-  expect(sent.detail).toContain('https://example.test/dashboard')
-  expect(sent.detail).toContain('open exit 1 (no browser)')
+  // Directional only: the page by its path and how each opener failed, never what an opener printed.
+  expect(sent.detail).toBe('/dashboard · open exit 1, xdg-open exit 1, rundll32 exit 1')
   expect(reports[0]).not.toContain('t=t')
   // The upgrade row stays, so See plans can be pressed again.
   expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
@@ -255,5 +256,92 @@ test('Founder Knowledge never shows under the bar, even when its tool is connect
   await ui.press({ key: 'expand' })
   expect(await ui.find({ type: 'Text', text: /^Web Research$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Founder Knowledge/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+/** A member past the first run whose latest message weighs a business call, with switches as given. */
+async function turnWith($: Parameters<Parameters<typeof test>[1]>[0], on: On, switches: Record<string, unknown>) {
+  const calls: string[] = []
+  on('session.messages', () => ({ value: [{ role: 'user', text: 'Should I price the starter offer at $49 a month or $490 a year?' }, { role: 'assistant', text: 'Here are the options.' }] }) as never)
+  on('session.surfaces', () => ({ value: ['desktop'] }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('session.cwd', () => ({ value: '/p' }) as never)
+  on('fs.exists', () => ({ value: false }) as never)
+  on('fs.stat', () => ({ value: { kind: 'other', size: 0, mtimeMs: 0, isLink: false } }) as never)
+  on('model.complete', (_, e) => {
+    calls.push(String((e as { model?: string }).model))
+    return { value: { isAnswered: true, text: '{"expert":{"category":"sales","topic":"Starter pricing","question":"Monthly or yearly for the starter offer?"},"items":[]}', usage: { input_tokens: 1, output_tokens: 1 } } } as never
+  })
+  const clock = await member($ as never, on, { welcomed: true, scanned: true, settings: switches })
+  // Past the minute between reviews, so a review would be allowed to run.
+  await clock.advance(120_000)
+  const turn = async () => {
+    await $.turn.complete({ reason: 'answer', answer: 'Here are the options.', durationMs: 10, isAborted: false, turnId: 't1' } as never)
+    await clock.advance(1)
+    // Let the review's own steps (file reads, the model call) settle.
+    for (let i = 0; i < 5; i += 1) await new Promise(r => setTimeout(r, 10))
+  }
+  return { calls, turn }
+}
+
+test('Self-Improving off, Expert Advice on: no review of the conversation, one quick check flags the decision', async ($, on) => {
+  const { calls, turn } = await turnWith($, on, { selfOn: false, expertOn: true })
+  await turn()
+  expect(calls).toEqual(['haiku'])
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect((await ui.find({ type: 'Button', key: 'ask-expert-nudge' }))?.text).toBe('Ask the expert')
+  await ui.unmount()
+})
+
+test('both switches off: nothing calls the model after a turn', async ($, on) => {
+  const { calls, turn } = await turnWith($, on, { selfOn: false, expertOn: false })
+  await turn()
+  expect(calls).toEqual([])
+})
+
+test('/plugin hide pauses reviews too: nothing calls the model after a turn', async ($, on) => {
+  const { calls, turn } = await turnWith($, on, { selfOn: true, expertOn: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'hide' } as never)
+  await turn()
+  expect(calls).toEqual([])
+})
+
+test('Self-Improving on: a decision question gets the full review (the control for the tests above)', async ($, on) => {
+  const { calls, turn } = await turnWith($, on, { selfOn: true, expertOn: true })
+  await turn()
+  expect(calls).toContain('opus')
+})
+
+test('a suggestion dismissed in another window leaves this one within 10 seconds', async ($, on) => {
+  // The store the windows on this machine share, held here so the test can act as the other window.
+  const store = new Map<string, unknown>([['welcomed', true], ['scanned', true]])
+  on('store.get', (_, e) => ({ value: store.get((e as { key: string }).key) }) as never)
+  on('store.set', (_, e) => (store.set((e as { key: string }).key, (e as { value: unknown }).value), { value: undefined }) as never)
+  on('store.delete', (_, e) => (store.delete((e as { key: string }).key), { value: undefined }) as never)
+  on('store.keys', () => ({ value: [...store.keys()] }) as never)
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await state($, 'suggestions')
+  const ui = await $.ui.mount(BAND('desktop'))
+  // One shows at a time: the first of 2.
+  expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeDefined()
+  // Another window on this machine dismisses it.
+  const saved = store.get('patterns') as Record<string, { status: string }>
+  store.set('patterns', { ...saved, 'demo-outline-item-count': { ...saved['demo-outline-item-count'], status: 'dismissed' } })
+  await clock.advance(10_000)
+  expect(await ui.find({ type: 'Button', key: 'card-apply-demo-outline-item-count' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'card-apply-demo-skill' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /of 2/ })).toBeUndefined()
   await ui.unmount()
 })

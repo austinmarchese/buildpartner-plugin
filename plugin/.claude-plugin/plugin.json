@@ -1,6 +1,6 @@
 {
   "name": "bp-dev",
-  "version": "0.15.9-dev.20261113103058",
+  "version": "0.15.9-dev.20261113105744",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -28,7 +28,7 @@
       "args": [
         "--npx",
         "-y",
-        "buildpartner@0.15.9-dev.20261113103058",
+        "buildpartner@0.15.9-dev.20261113105744",
         "serve"
       ]
     }
@@ -51,11 +51,27 @@
             "type": "command",
             "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
             "timeout": 5
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
           {
             "type": "command",
-            "command": "day=$(date +%u); if [ \"$day\" = \"1\" ] || [ \"$day\" = \"5\" ]; then printf '{\"systemMessage\":\"IMPROVE SYSTEM REMINDER: Run /bp-dev:improve-system to review your sessions and keep your setup sharp.\"}'; fi",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/improve-reminder.sh start",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/improve-reminder.sh ran",
+            "timeout": 3
           }
         ]
       }
@@ -77,6 +93,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/improve-reminder.sh ran",
+            "timeout": 3
+          }
+        ]
+      },
       {
         "matcher": "mcp__plugin_[^_]+_tools__.*",
         "hooks": [
