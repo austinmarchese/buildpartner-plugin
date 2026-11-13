@@ -6,18 +6,18 @@
   },
   "metadata": {
     "description": "Expert guidance, coaching, and personalized training inside Claude Code.",
-    "version": "0.15.9-dev.20261113105744"
+    "version": "0.15.9-dev.20261113122352"
   },
   "plugins": [
     {
       "name": "bp-dev",
       "source": {
         "source": "archive",
-        "url": "https://github.com/austinmarchese/buildpartner-plugin/releases/download/dev-latest/bp-dev-0.15.9-dev.20261113105744.zip",
-        "sha256": "6eae7b69507a47030962bc5dcccb33e87ee7d4ff38e36807e89decce7d5af700"
+        "url": "https://github.com/austinmarchese/buildpartner-plugin/releases/download/dev-latest/bp-dev-0.15.9-dev.20261113122352.zip",
+        "sha256": "c8e00361be05336d6cf38705fb62ea09cf14a5adfbeb5e1391d5cbe1b074a1a8"
       },
       "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
-      "version": "0.15.9-dev.20261113105744",
+      "version": "0.15.9-dev.20261113122352",
       "category": "productivity",
       "tags": [
         "coaching",
@@ -30,11 +30,11 @@
       "name": "bp-dev-team",
       "source": {
         "source": "archive",
-        "url": "https://github.com/austinmarchese/buildpartner-plugin/releases/download/dev-latest/bp-dev-team-0.15.9-dev.20261113105744.zip",
-        "sha256": "e7a931864845af3d41275480e9b0104d40f437a145fb56730f460643d0b38cc5"
+        "url": "https://github.com/austinmarchese/buildpartner-plugin/releases/download/dev-latest/bp-dev-team-0.15.9-dev.20261113122352.zip",
+        "sha256": "550d258ee1df8b2ef78b74474343c5d3b32fadcef41e62b2f9549e33a275f299"
       },
       "description": "BuildPartner.ai team plan: ask your company's founder and leadership directly inside Claude Code.",
-      "version": "0.15.9-dev.20261113105744",
+      "version": "0.15.9-dev.20261113122352",
       "category": "productivity",
       "tags": [
         "team",

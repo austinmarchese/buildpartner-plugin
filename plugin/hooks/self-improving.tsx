@@ -1551,9 +1551,9 @@ const BELL = svg(
 const WELCOME = {
   title: `Welcome to ${NAME}`,
   lines: [
-    'Self-Improving System watches for the moments you correct Claude, then suggests a rule or skill so it gets it right next time.',
-    'Expert Advice spots decisions in your conversation and brings in proven expert frameworks to answer them.',
-    'Nothing changes until you press Apply. More tools are under ▼.',
+    // Austin's words (2026-11-13), as written.
+    "This is our Claude Mod, which creates a self-improving system on your own setup. This looks for any time you correct Claude, then suggests a rule or skill so it gets it right next time.",
+    "Nothing changes until you press Apply. More tools are under ▼. Let's build.",
   ],
 }
 
@@ -2797,7 +2797,7 @@ function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
             SELF_LINE,
             <Box key="self-controls" flexDirection="row" alignItems="center" columnGap={2}>
               <Button key="use-self" label="Full setup review" onPress={click($, 'prompt', 'Full setup review', () => useSelf($))} />
-              {more('self', 'Self-Improving System', '/dashboard/builds/self-improving-system')}
+              {more('self', 'Self-Improving System', '/dashboard/self-improving')}
             </Box>,
           ),
           row(
