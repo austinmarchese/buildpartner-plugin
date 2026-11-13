@@ -827,13 +827,12 @@ async function dismiss($: Dollar, id: string): Promise<void> {
   await setStatus($, id, 'dismissed')
 }
 
-/** BuildPartner.ai's tools, found by the MCP tool each one serves; pressing one starts a prompt. */
+/** BuildPartner.ai's tools, found by the MCP tool each one serves; pressing one starts a prompt. Founder Knowledge (team accounts) is never listed in the bar. */
 // `prompt` gets the serving plugin's name (bp-dev or buildpartner) in place of {p}.
 const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: string; prompt: string; more: string }[] = [
   { key: 'pad', tool: 'build_pad', label: 'BuildPad', hint: "Create a plan before Claude builds, so you don't redo the work.", prompt: '/{p}:build-pad ', more: '/dashboard/build-pad' },
   { key: 'social', tool: 'social_intel', label: 'Social Intel', hint: 'Research posts, creators and videos on X, Instagram and YouTube.', prompt: 'Use BuildPartner social intel to ', more: '/dashboard/social' },
   { key: 'web', tool: 'web_research', label: 'Web Research', hint: "Search the web and read any page, even ones Claude can't.", prompt: '/{p}:web-research ', more: '/dashboard/web' },
-  { key: 'founder', tool: 'get_founder_knowledge', label: 'Founder Knowledge', hint: 'Ask how your founder would handle it.', prompt: '/{p}-team:ask-founder ', more: '/dashboard/team' },
 ]
 
 async function findBpTools($: Dollar): Promise<void> {
@@ -2739,8 +2738,6 @@ function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
                   {more(t.key, t.label, t.more)}
                 </Box>,
               )
-            // Founder Knowledge is for team accounts: with no team it is left out, not shown as broken.
-            if (t.key === 'founder') return ''
             // A plugin's tools connect when a session starts, so a new session is the fix.
             return row(`tool-${t.key}`, t.label, 'Not connected. Start a new Claude session to connect it.', more(t.key, t.label, t.more))
           }),

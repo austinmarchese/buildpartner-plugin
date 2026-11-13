@@ -247,3 +247,13 @@ test('See plans with no browser to open: the prompt fills with the open-dashboar
   expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
   await ui.unmount()
 })
+
+test('Founder Knowledge never shows under the bar, even when its tool is connected', async ($, on) => {
+  on('tool.list', () => ({ value: [{ name: 'mcp__plugin_bp-dev-team_tools__get_founder_knowledge' }, { name: 'mcp__plugin_bp-dev_tools__web_research' }] }) as never)
+  await member($, on)
+  const ui = await $.ui.mount(BAND('desktop'))
+  await ui.press({ key: 'expand' })
+  expect(await ui.find({ type: 'Text', text: /^Web Research$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Founder Knowledge/ })).toBeUndefined()
+  await ui.unmount()
+})
