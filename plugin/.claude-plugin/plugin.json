@@ -1,6 +1,6 @@
 {
   "name": "buildpartner",
-  "version": "0.15.9",
+  "version": "0.15.10",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -14,13 +14,21 @@
     "productivity",
     "claude-code"
   ],
+  "userConfig": {
+    "install_code": {
+      "type": "string",
+      "title": "Install code",
+      "description": "Signs this install in to BuildPartner.ai. Filled in by the install command on buildpartner.ai; works once. Leave empty otherwise.",
+      "required": false
+    }
+  },
   "mcpServers": {
     "tools": {
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/bp-node",
       "args": [
         "--npx",
         "-y",
-        "buildpartner@0.15.9",
+        "buildpartner@0.15.10",
         "serve"
       ]
     }
@@ -31,6 +39,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/install-code.mjs",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/gate.mjs",
             "timeout": 10
           },
@@ -38,11 +51,27 @@
             "type": "command",
             "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/plugin-update.mjs",
             "timeout": 5
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
           {
             "type": "command",
-            "command": "day=$(date +%u); if [ \"$day\" = \"1\" ] || [ \"$day\" = \"5\" ]; then printf '{\"systemMessage\":\"IMPROVE SYSTEM REMINDER: Run /buildpartner:improve-system to review your sessions and keep your setup sharp.\"}'; fi",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/improve-reminder.sh start",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/improve-reminder.sh ran",
+            "timeout": 3
           }
         ]
       }
@@ -64,6 +93,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/improve-reminder.sh ran",
+            "timeout": 3
+          }
+        ]
+      },
       {
         "matcher": "mcp__plugin_[^_]+_tools__.*",
         "hooks": [
@@ -87,5 +126,6 @@
         ]
       }
     ]
-  }
+  },
+  "types": "./types/index.d.ts"
 }
