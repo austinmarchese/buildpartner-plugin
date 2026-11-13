@@ -1,6 +1,6 @@
 {
   "name": "bp-dev",
-  "version": "0.15.9-dev.20261112161138",
+  "version": "0.15.9-dev.20261112212337",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -14,13 +14,21 @@
     "productivity",
     "claude-code"
   ],
+  "userConfig": {
+    "install_code": {
+      "type": "string",
+      "title": "Install code",
+      "description": "Signs this install in to BuildPartner.ai. Filled in by the install command on buildpartner.ai; works once. Leave empty otherwise.",
+      "required": false
+    }
+  },
   "mcpServers": {
     "tools": {
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/bp-node",
       "args": [
         "--npx",
         "-y",
-        "buildpartner@0.15.9-dev.20261112161138",
+        "buildpartner@0.15.9-dev.20261112212337",
         "serve"
       ]
     }
@@ -29,6 +37,11 @@
     "SessionStart": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/install-code.mjs",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "sh ${CLAUDE_PLUGIN_ROOT}/bin/bp-node ${CLAUDE_PLUGIN_ROOT}/hooks/gate.mjs",
