@@ -1556,8 +1556,8 @@ const WELCOME = {
   title: `Welcome to ${NAME}`,
   lines: [
     // Austin's words (2026-11-13), as written.
-    "This is our Claude Mod, which creates a self-improving system on your own setup. This looks for any time you correct Claude, then suggests a rule or skill so it gets it right next time.",
-    "Nothing changes until you press Apply. More tools are under ▼. Let's build.",
+    "This is our Claude mod. As you work, it will automatically suggest ways you can improve your system, but nothing changes until you apply it.",
+    "To learn more about BuildPartner.ai, click ▼. Let's build.",
   ],
 }
 
