@@ -147,6 +147,60 @@ async function auth($: Dollar): Promise<{ token: string | null; apiBase: string;
   }
 }
 
+/**
+ * A fresh install from buildpartner.ai carries a one-time install code
+ * (plugin.json userConfig install_code; Claude Code keeps it in
+ * ~/.claude/settings.json under pluginConfigs). The bar loads the moment the
+ * plugin installs, so with no sign-in yet it trades the code for the login at
+ * POST /api/buildpartner/login/poll (hands it out once) and saves it: the bar is
+ * signed in right away, no reload or new chat. hooks/install-code.mjs does the
+ * same at session start, as the backup. True when this signed in.
+ */
+async function signInFromInstallCode($: Dollar): Promise<boolean> {
+  const h = await home($)
+  if (!h || (await auth($)).token) return false
+  const settings = await attempt(
+    async () => JSON.parse(String(await $.fs.read(`${h}/.claude/settings.json`))) as { pluginConfigs?: Record<string, { options?: { install_code?: unknown } }> },
+    {} as { pluginConfigs?: Record<string, { options?: { install_code?: unknown } }> },
+  )
+  const configs = settings.pluginConfigs ?? {}
+  const key = Object.keys(configs).find(k => k.startsWith(`${$.plugin.name}@`))
+  const code = key ? configs[key]?.options?.install_code : undefined
+  if (typeof code !== 'string' || !/^[a-f0-9]{64}$/.test(code)) return false
+  // bp-dev and bp-local are dev builds and sign in against dev, like install-code.mjs.
+  const base = isDevBuild($) ? 'https://dev.buildpartner.ai' : DEFAULT_API
+  const r = await attempt(
+    () => $.http.fetch(`${base}/api/buildpartner/login/poll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login_id: code }) }),
+    null,
+  )
+  if (!r?.ok) return false
+  const j = await attempt(async () => JSON.parse(r.text) as { status?: unknown; token?: unknown; email?: unknown; username?: unknown; profile_url?: unknown }, null)
+  if (!j || j.status !== 'approved' || typeof j.token !== 'string') return false
+  const authFile = {
+    email: j.email,
+    username: j.username,
+    token: j.token,
+    profile_url: j.profile_url,
+    created_at: new Date(await $.clock.now()).toISOString(),
+    // Same rule as `buildpartner login` and install-code.mjs: only non-prod saves its server.
+    ...(base === DEFAULT_API ? {} : { api_base: base }),
+  }
+  const dir = `${h}/.buildpartner`
+  await attempt(() => $.process.run(['mkdir', '-p', dir], { timeoutMs: 5_000 }), null)
+  const saved = await attempt(async () => (await $.fs.write(`${dir}/auth.json`, JSON.stringify(authFile, null, 2) + '\n'), true), false)
+  if (!saved) return false
+  // Same event install.sh and install-code.mjs send, so the dashboard's install step ticks.
+  void attempt(
+    () => $.http.fetch(`${base}/api/buildpartner/ingest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${j.token}` },
+      body: JSON.stringify({ events: [{ event: 'install.completed' }] }),
+    }),
+    null,
+  )
+  return true
+}
+
 // ---- Self-improving ----
 
 // The criteria are improve-system's own (Mode 5: suggestion types, never a
@@ -2056,6 +2110,11 @@ export const register: Register = on => {
     $.clock.after(0, () => void attempt(() => findBpTools($), undefined))
     $.clock.after(0, () =>
       void attempt(async () => {
+        // A fresh install signs itself in from its install code before anything reads the sign-in.
+        if (await attempt(() => signInFromInstallCode($), false)) {
+          void attempt(() => refreshPlan($), undefined)
+          void attempt(() => refreshNotices($), undefined)
+        }
         await refreshHealth($)
         if (active) await pingActive($, lastSurface)
       }, undefined),
