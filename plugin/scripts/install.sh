@@ -91,9 +91,68 @@ rm -f "$BP_DIR/tools-connected.json" 2>/dev/null || true
 
 json_str() { printf '%s' "$1" | tr -d '\000-\037' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
+# Error text is scrubbed before it leaves this machine: the home folder becomes
+# ~, the user name in any home path becomes <user>, emails become [email], and
+# sk_ keys, Bearer values, long tokens and the token entered here become
+# [removed]. Terminal codes (colours, titles), spinner and box glyphs and
+# control characters are dropped. Byte by byte (LC_ALL=C), so it works the
+# same in any locale, on macOS, Linux and Git Bash.
+ESC=$'\033'; BEL=$'\007'
+GLYPHS="$(printf '\342[\240-\243][\200-\277]|\342[\224\225][\200-\277]|\342\226[\200-\237]|\357\277\275|\302[\200-\237]')"
+scrub_literals() {
+  local s="$1" t='~' v
+  if [ "${#HOME}" -gt 1 ]; then s="${s//"$HOME"/$t}"; fi
+  # Git Bash: native programs print the Windows form of the home folder
+  # (C:\Users\Jane Doe), which $HOME (/c/Users/...) does not match. Scrub it
+  # whole, in both slash forms, so no part of a name with a space is sent.
+  v="${USERPROFILE:-}"
+  if [ "${#v}" -gt 3 ]; then
+    s="${s//"$v"/$t}"; v="${v//\\//}"; s="${s//"$v"/$t}"
+  fi
+  if [ -n "${EMAIL:-}" ]; then s="${s//"$EMAIL"/[email]}"; fi
+  for v in "${TOKEN:-}" "${PROVIDED_TOKEN:-}"; do
+    if [ -n "$v" ]; then s="${s//"$v"/[removed]}"; fi
+  done
+  printf '%s\n' "$s"
+}
+scrub_stream() {
+  LC_ALL=C sed -E "s#${ESC}\\][^${BEL}${ESC}]*(${BEL}|${ESC}\\\\)##g; s#${ESC}\\[[0-?]*[ -/]*[@-~]##g; s#${GLYPHS}##g" |
+    LC_ALL=C tr -d '\000-\011\013-\037\177' |
+    LC_ALL=C sed -E 's#([\\/][Uu][Ss][Ee][Rr][Ss][\\/]|[\\/][Hh][Oo][Mm][Ee][\\/])[^/\\[:space:]]+#\1<user>#g
+      s#[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}#[email]#g
+      s#[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]]+[^[:space:]]+#Bearer [removed]#g
+      s#sk_[A-Za-z0-9]+#[removed]#g
+      s#[A-Za-z0-9_-]{24,}#[removed]#g'
+}
+
+# A failed command's report: the last five meaningful lines of its output,
+# joined with " | ". Spinners redraw with a carriage return, so CR splits lines
+# too and only the final state counts. Blank lines are dropped and repeats kept
+# once. At most $2 characters: the earliest lines go first, and the last line
+# always stays (cut to fit when it alone is too long).
+error_lines() {
+  scrub_literals "$1" | LC_ALL=C tr '\r' '\n' | scrub_stream |
+    LC_ALL=C sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | LC_ALL=C grep -v '^$' | uniq | tail -5 |
+    LC_ALL=C awk -v max="$2" '{ l[++n] = $0 } END {
+      s = 1; len = 0
+      for (i = 1; i <= n; i++) len += length(l[i]) + (i > 1 ? 3 : 0)
+      while (s < n && len > max) { len -= length(l[s]) + 3; s++ }
+      out = l[s]; for (i = s + 1; i <= n; i++) out = out " | " l[i]
+      printf "%s", substr(out, 1, max)
+    }'
+}
+
 report_step() {
   [ -n "$INSTALL_ID" ] || return 0
-  body="{\"install_id\":\"$INSTALL_ID\",\"step\":\"$1\",\"source\":\"sh\",\"os\":\"$(json_str "$INSTALL_OS")\",\"arch\":\"$(json_str "$INSTALL_ARCH")\",\"version\":\"$(json_str "$PLUGIN_VERSION")\",\"cc_version\":\"$(json_str "${CC_VERSION:-}")\",\"node_version\":\"$(json_str "$NODE_VERSION")\",\"failed_step\":\"$(json_str "${2:-}")\",\"error\":\"$(json_str "${3:-}")\"}"
+  err=""
+  if [ -n "${3:-}" ]; then
+    err="$(scrub_literals "$3" | scrub_stream | LC_ALL=C tr '\n' ' ' | sed 's/ *$//')"
+    err="${err:0:900}"
+  fi
+  # "began" (a phase just started) also says which phase.
+  phase=""
+  [ "$1" != began ] || phase=",\"phase\":\"$(json_str "$INSTALL_STEP")\""
+  body="{\"install_id\":\"$INSTALL_ID\",\"step\":\"$1\",\"source\":\"sh\",\"os\":\"$(json_str "$INSTALL_OS")\",\"arch\":\"$(json_str "$INSTALL_ARCH")\",\"version\":\"$(json_str "$PLUGIN_VERSION")\",\"cc_version\":\"$(json_str "${CC_VERSION:-}")\",\"node_version\":\"$(json_str "$NODE_VERSION")\",\"failed_step\":\"$(json_str "${2:-}")\",\"error\":\"$(json_str "$err")\"$phase}"
   if [ -n "${TOKEN:-}" ]; then
     ( curl -s -m 3 -X POST "$API_BASE/api/buildpartner/install-event" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "$body" </dev/null >/dev/null 2>&1 & ) 2>/dev/null || true
   else
@@ -110,16 +169,29 @@ on_install_exit() {
 trap 'INSTALL_LAST_CMD="$BASH_COMMAND"' ERR
 trap 'on_install_exit $?' EXIT
 
-# Runs a claude command, shows its output, and keeps its last line for the
-# install report when it fails.
+# A phase starts: remember it for a failure report and post "began", so an
+# install that quits here without a word (window closed, Ctrl+C) still shows
+# where it stopped.
+begin_phase() {
+  INSTALL_STEP="$1"
+  report_step began
+}
+
+# Runs a claude command, shows its output, and keeps "exit <code>: <its last
+# lines>" for the install report when it fails (850 leaves room for our own
+# words in front, under the 900 cap).
 run_reported() {
   out="$("$@" </dev/null 2>&1)" && rc=0 || rc=$?
   [ -z "$out" ] || printf '%s\n' "$out"
-  [ "$rc" = 0 ] || INSTALL_ERROR="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -1)"
+  if [ "$rc" != 0 ]; then
+    lines="$(error_lines "$out" 850)"
+    INSTALL_ERROR="exit $rc: ${lines:-no output}"
+  fi
   return "$rc"
 }
 
 report_step started
+begin_phase claude_code
 
 debug "API_BASE=$API_BASE"
 debug "API_DOMAIN=$API_DOMAIN"
@@ -233,7 +305,7 @@ if [ -n "$CC_VERSION" ] && ! version_ge "$CC_VERSION" "$CC_MIN_VERSION"; then
   fi
 fi
 debug "claude version=$CC_VERSION supports_zip=$CC_SUPPORTS_ZIP"
-INSTALL_STEP="node"
+begin_phase node
 
 # ── Check Node.js (installing it if missing) ─────────────────────
 # Node runs the plugin's tools server (`npx buildpartner serve`) and its hooks,
@@ -341,7 +413,7 @@ else
 fi
 NODE_VERSION="$(node -v 2>/dev/null)"
 report_step node_ready
-INSTALL_STEP="sign_in"
+begin_phase sign_in
 
 # Git is only a fallback now (old Claude Code, or the hosted catalog is down).
 # On a Mac without Apple's developer tools, /usr/bin/git is a placeholder that
@@ -409,18 +481,30 @@ if [ "${SKIP_SIGNUP}" != "true" ]; then
   # Under `curl | bash` stdin is the script itself, so prompt on the
   # controlling terminal instead. Only give up when there is no terminal
   # at all (CI, cron, a redirected shell).
-  if ( : < /dev/tty ) 2>/dev/null; then
+  # Git Bash on Windows Terminal or VS Code (ConPTY) often has no controlling
+  # terminal, so /dev/tty cannot be opened even though a person is typing
+  # (our inference from the reports). When stdin is that terminal, read it.
+  PROMPT_TTY=""
+  if ( : < /dev/tty ) 2>/dev/null; then PROMPT_TTY=/dev/tty
+  elif [ -t 0 ]; then PROMPT_TTY=/dev/stdin; fi
+  if [ -n "$PROMPT_TTY" ]; then
     printf "        Email: "
-    read -r EMAIL < /dev/tty
+    read -r EMAIL < "$PROMPT_TTY"
 
     while [ -z "$EMAIL" ] || ! echo "$EMAIL" | grep -q "@"; do
       echo -e "  ${YELLOW}      Enter a valid email${RESET}"
       printf "        Email: "
-      read -r EMAIL < /dev/tty
+      read -r EMAIL < "$PROMPT_TTY"
     done
   else
     echo -e "  ${YELLOW}! No terminal to prompt on. Run this in a terminal, or pass --token.${RESET}"
-    INSTALL_ERROR="No terminal to prompt on"
+    case "$INSTALL_OS" in mingw*) NO_TTY=mingw ;; msys*) NO_TTY=msys ;; cygwin*) NO_TTY=cygwin ;; *) NO_TTY=other ;; esac
+    if [ "$NO_TTY" != other ]; then
+      echo "  On Windows, either of these has a terminal:"
+      printf '    %s\n' "curl -fsSL $API_BASE/install.sh -o install.sh && bash install.sh"
+      printf '    %s\n' 'powershell -ExecutionPolicy Bypass -c "irm https://buildpartner.ai/install.ps1 -OutFile bp.ps1; .\bp.ps1; del bp.ps1"'
+    fi
+    INSTALL_ERROR="No terminal to prompt on ($NO_TTY)"
     exit 1
   fi
 
@@ -505,7 +589,7 @@ fi
 
 echo ""
 report_step signed_in
-INSTALL_STEP="marketplace"
+begin_phase marketplace
 
 # ── Step 2: Install plugin via marketplace ────────────────────────
 echo -e "${BOLD}  [2/3] Installing plugin...${RESET}"
@@ -594,7 +678,7 @@ if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; th
 fi
 
 debug "installing plugin: $PLUGIN_NAME@$MARKETPLACE_NAME"
-INSTALL_STEP="plugin"
+begin_phase plugin
 if run_reported claude plugin install "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
   echo -e "  ${GREEN}✓ Plugin installed${RESET}"
 else
@@ -604,7 +688,7 @@ else
 fi
 PLUGIN_VERSION="$(claude plugin list </dev/null 2>/dev/null | grep -A1 " $PLUGIN_NAME@$MARKETPLACE_NAME\$" | sed -n 's/.*Version: *//p' | head -1)" || true
 report_step plugin_installed
-INSTALL_STEP="finish"
+begin_phase finish
 
 TEAM_INSTALLED=false
 if [ -n "$ORG_SLUG" ] || [ "$FORCE_TEAM" = true ]; then
