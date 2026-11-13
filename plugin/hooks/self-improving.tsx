@@ -1161,6 +1161,15 @@ function isOutOfRuns(pl: MemberPlan | null): boolean {
   return !!pl && !pl.paid && pl.creditsLeft !== null && pl.creditsLeft <= 0
 }
 
+// How long Not now keeps "Free runs used up" away: a few days, never every session.
+const UPGRADE_QUIET_MS = 3 * 86_400_000
+
+/** Not now on the upgrade row: hidden now and for the next few days, on every session. */
+async function skipUpgrade($: Dollar): Promise<void> {
+  await update($, upgradeSkipped, () => true)
+  await attempt(async () => $.store.set('upgradeQuietUntil', (await $.clock.now()) + UPGRADE_QUIET_MS), undefined)
+}
+
 async function upgrade($: Dollar): Promise<void> {
   await openDashboard($, '/dashboard?upgrade=true')
 }
@@ -1815,7 +1824,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
       header: 'Free runs used up',
       text: 'Upgrade to keep using Expert Advice and the tools.',
       primary: { key: 'upgrade-bar', label: 'See plans', kind: 'open', onPress: () => upgrade($) },
-      secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => update($, upgradeSkipped, () => true) },
+      secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => skipUpgrade($) },
     })
   }
   for (const n of v.notices) {
@@ -2091,6 +2100,11 @@ export const register: Register = on => {
       await update($, busySince, () => 0)
       const wasWelcomed = (await $.store.get('welcomed')) === true
       await update($, isWelcomed, () => wasWelcomed)
+      // Not now on "Free runs used up" holds for UPGRADE_QUIET_MS across sessions, so free members
+      // are not asked every session. Pressing a paid tool while out still opens the upgrade page.
+      const quietUntil = Number((await $.store.get('upgradeQuietUntil')) ?? 0)
+      const nowMs = await $.clock.now()
+      await update($, upgradeSkipped, () => nowMs < quietUntil)
       await saveLedger($, await ledger($))
     }, undefined)
     // Each registration stands alone: a refused command never costs the tool.
