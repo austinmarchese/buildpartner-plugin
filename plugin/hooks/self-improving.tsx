@@ -858,22 +858,23 @@ async function messageCoach($: Dollar): Promise<void> {
   await openDashboard($, '/dashboard/executive?coach=1')
 }
 
-const EXPERT_DEFAULT =
-  'Look at what we are working on in this conversation. Name the decision that matters most right now and what the right expert framework says about it.'
-
 /** Not now: drops the flagged question, and ends the dev "expert" preview, which would draw it again. */
 async function skipExpert($: Dollar): Promise<void> {
   await update($, expert, () => null)
 }
 
-/** Ask the expert: hands the flagged question (or the conversation itself) to /bp-dev:expert-advice. */
+/**
+ * Ask the expert: hands the flagged question to /bp-dev:expert-advice. With none flagged it
+ * fills the bare command, keeping anything the member already typed after it, so they can add
+ * their own question; on its own, the skill works from the decision in the conversation.
+ */
 async function askExpert($: Dollar): Promise<void> {
   if (isOutOfRuns(await attempt(() => read($, plan), null))) {
     await upgrade($)
     return
   }
   const ex = await attempt(() => read($, expert), null)
-  if (await handOver($, `/bp-dev:expert-advice ${ex?.question ?? EXPERT_DEFAULT}`, 'prepend')) {
+  if (await handOver($, `/bp-dev:expert-advice ${ex?.question ?? ''}`, 'prepend')) {
     if (ex) await update($, expert, () => null)
   }
 }
@@ -1184,7 +1185,7 @@ async function openDashboard($: Dollar, path = '/dashboard'): Promise<void> {
 /** Ask the team (open): the contact form on BuildPartner.ai. No ?t= sign-in link: it is a public page. */
 async function askTeam($: Dollar): Promise<void> {
   const a = await auth($)
-  const url = `${a.apiBase}/contact`
+  const url = `${a.apiBase}/contact?topic=mod`
   if (!(await openUrl($, url))) $.ui.toast(`${NAME}: could not open a browser. The contact form is at ${url}`)
 }
 

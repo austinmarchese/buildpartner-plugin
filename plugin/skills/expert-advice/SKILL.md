@@ -43,7 +43,7 @@ If a tool result is replaced by a placeholder like "[Full result archived (N cha
 
 ## Instructions
 
-1. Take the user's question or problem description.
+1. Take the user's question or problem description. If they ran this with no question, use the decision that matters most in this conversation, and say in one line which decision you picked.
 
 2. Classify their question into 1-2 categories from the list above. Pick the best match based on what they're actually asking, not just keywords.
 
