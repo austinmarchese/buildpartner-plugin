@@ -130,6 +130,12 @@ export type TeamNotice = {
   prompt?: string
 }
 
+/** The first-run welcome card's words: the title and each paragraph under it. */
+export type WelcomeText = {
+  title: string
+  lines: string[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'bp-dev': {
@@ -157,6 +163,7 @@ declare module 'claude-code' {
       appliedNow: Shaped<string[]>
       notices: Shaped<TeamNotice[]>
       isWelcomed: boolean
+      welcomeText: Shaped<WelcomeText | null>
       rowAt: number
       upgradeSkipped: boolean
       audit: Shaped<AuditRun | null>

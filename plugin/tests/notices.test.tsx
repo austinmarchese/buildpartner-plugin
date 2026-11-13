@@ -16,7 +16,7 @@ const NOTICE = { id: 'n1', kind: 'video', message: 'New video from Austin: my we
 
 type On = Parameters<typeof mock.store>[0]
 
-function engine(on: On, notices: unknown[], events: string[] = []) {
+function engine(on: On, notices: unknown[], events: string[] = [], welcome?: unknown) {
   const clock = mock.clock(on)
   on('tool.register', () => ({ value: { tool: 'x' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -27,7 +27,7 @@ function engine(on: On, notices: unknown[], events: string[] = []) {
       return { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } }
     }
     return e.url.endsWith('/api/buildpartner/mod/notices')
-      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices }) } }
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices, welcome }) } }
       : { value: { status: 404, ok: false, headers: {}, text: '' } }
   })
   return clock
@@ -46,6 +46,35 @@ test('a new member sees the welcome card once, and Not now puts it away', async 
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'welcome-ok' })
   expect(await ui.find({ type: 'Text', text: /Welcome to BuildPartner\.ai/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the welcome card shows the words the team saved, as plain text within the limits', async ($, on) => {
+  mock.store(on)
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [], [], { title: 'Hello from the team\u0007', lines: ['First paragraph.\nSame paragraph.', 7, 'x'.repeat(400), 'c', 'd', 'e'] })
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount(BAND(surface))
+    expect((await ui.find({ type: 'Text', text: /Hello from the team/ }))?.text).toBe('Hello from the team')
+    expect(await ui.find({ type: 'Text', text: /Welcome to BuildPartner\.ai/ })).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: /First paragraph/ }))?.text).toBe('First paragraph. Same paragraph.')
+    expect((await ui.find({ type: 'Text', text: /^x+$/ }))?.text.length).toBe(280)
+    // Four paragraphs at most: the fifth is dropped.
+    expect(await ui.find({ type: 'Text', text: /^e$/ })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('welcome text that is not text falls back to the built-in words', async ($, on) => {
+  mock.store(on)
+  mock.env(on, { HOME: '/home/m' })
+  engine(on, [], [], { title: '', lines: 'no' })
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'buildpartner:plugin', args: 'notices' } as never)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect((await ui.find({ type: 'Text', text: /Welcome to BuildPartner\.ai/ }))?.text).toContain('Welcome')
   await ui.unmount()
 })
 

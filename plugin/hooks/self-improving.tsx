@@ -25,7 +25,7 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun, AuditRun } from '../types'
+import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun, AuditRun, WelcomeText } from '../types'
 
 type Dollar = EngineInterface
 
@@ -91,6 +91,8 @@ const notices = atom({ plugin: 'bp-dev', key: 'notices' } as const, [] as TeamNo
 // Which row above the bar shows when more than one call to action waits (Next steps through them).
 const rowAt = atom({ plugin: 'bp-dev', key: 'rowAt' } as const, 0)
 const isWelcomed = atom({ plugin: 'bp-dev', key: 'isWelcomed' } as const, true)
+// The welcome card's words as the team last saved them on Admin > Mod; null for the words built in (WELCOME).
+const welcomeText = atom({ plugin: 'bp-dev', key: 'welcomeText' } as const, null as WelcomeText | null, { shape: 'wt-1' })
 // An AI Audit run in this session: how far it is, read from the file the audit writes. null when none.
 const audit = atom({ plugin: 'bp-dev', key: 'audit' } as const, null as AuditRun | null, { shape: 'au-1' })
 // Whether the BuildPartner.ai team has the mod on for this install (Admin > Mod > Rollout). False:
@@ -1046,14 +1048,35 @@ async function dismissedNotices($: Dollar): Promise<string[]> {
   return Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === 'string') : []
 }
 
-/** Reads the team's notices. Fails soft: a failed read keeps what the bar shows. */
+// The welcome card's limits, the same ones Admin > Mod saves under (lib/mod-notices.ts).
+const WELCOME_TITLE_MAX = 60
+const WELCOME_LINES_MAX = 4
+const WELCOME_LINE_MAX = 280
+
+/** One line of plain text from the server: no control characters, no new lines, cut to `max`. */
+function plainLine(v: unknown, max: number): string {
+  return typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/ +/g, ' ').trim().slice(0, max) : ''
+}
+
+/** The team's welcome text as the card may draw it, or null (the built-in words) when it is missing or not text. */
+function cleanWelcome(raw: unknown): WelcomeText | null {
+  const w = raw && typeof raw === 'object' ? (raw as { title?: unknown; lines?: unknown }) : null
+  if (!w) return null
+  const title = plainLine(w.title, WELCOME_TITLE_MAX)
+  const lines = (Array.isArray(w.lines) ? w.lines : []).map(l => plainLine(l, WELCOME_LINE_MAX)).filter(Boolean).slice(0, WELCOME_LINES_MAX)
+  return title && lines.length ? { title, lines } : null
+}
+
+/** Reads the team's notices, and the welcome card's words. Fails soft: a failed read keeps what the bar shows. */
 async function refreshNotices($: Dollar): Promise<void> {
   const a = await auth($)
   if (!a.token) return
   const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/mod/notices`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
   if (!r?.ok) return
-  const j = await attempt(async () => JSON.parse(r.text) as { notices?: unknown }, null)
+  const j = await attempt(async () => JSON.parse(r.text) as { notices?: unknown; welcome?: unknown }, null)
   if (!j || !Array.isArray(j.notices)) return
+  // The welcome card's words ride along: the team's, or null for the ones built in.
+  await update($, welcomeText, () => cleanWelcome(j.welcome))
   const gone = new Set(await dismissedNotices($))
   const list: TeamNotice[] = []
   for (const raw of j.notices as Record<string, unknown>[]) {
@@ -1586,9 +1609,11 @@ const BELL = svg(
   `<path d="M8 1.8a4 4 0 0 0-4 4v2.6L2.8 10.8h10.4L12 8.4V5.8a4 4 0 0 0-4-4z" fill="none" stroke="${CLAY}" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.4 13a1.7 1.7 0 0 0 3.2 0" fill="none" stroke="${CLAY}" stroke-width="1.4" stroke-linecap="round"/>`,
 )
 
-// The first-run card. Admin > Mod shows the same words (MOD_WELCOME in
-// apps/web/lib/mod-notices.ts, guarded by a test): change the two together.
-const WELCOME = {
+// The first-run card's built-in words. Admin > Mod shows the same ones (MOD_WELCOME in
+// apps/web/lib/mod-notices.ts, guarded by a test): change the two together. The team
+// can save other words on Admin > Mod with no plugin release (welcomeText, read with the
+// notices); these show until that read lands, and whenever it fails.
+const WELCOME: WelcomeText = {
   title: `Welcome to ${NAME}`,
   lines: [
     // Austin's words (2026-11-13), as written.
@@ -2036,9 +2061,9 @@ function topCardDesktop($: Dollar, D: Elements, v: View, Svg: SvgEl): JSX.Elemen
       <Box key="bp-welcome" flexDirection="column" borderStyle="round" borderColor={LOGO_TINT} paddingX={1} rowGap={1}>
         <Box flexDirection="row" alignItems="center" columnGap={1}>
           <Svg source={LOGO} alt="BuildPartner.ai" width={18} height={18} />
-          <Text bold>{WELCOME.title}</Text>
+          <Text bold>{v.welcome.title}</Text>
         </Box>
-        {WELCOME.lines.map(l => (
+        {v.welcome.lines.map(l => (
           <Text wrap="wrap">{l}</Text>
         ))}
         {v.scanned ? (
@@ -2063,8 +2088,8 @@ function topCardPlain($: Dollar, D: Elements, v: View): JSX.Element | '' {
   if (!v.welcomed) {
     return (
       <Box key="bp-welcome" flexDirection="column">
-        <Text bold>{WELCOME.title}</Text>
-        {WELCOME.lines.map(l => (
+        <Text bold>{v.welcome.title}</Text>
+        {v.welcome.lines.map(l => (
           <Text dimColor wrap="wrap">
             {l}
           </Text>
@@ -2115,6 +2140,8 @@ type View = {
   rowAt: number
   /** The first-run welcome card was seen. */
   welcomed: boolean
+  /** The welcome card's words: the team's when saved, else the built-in ones. */
+  welcome: WelcomeText
   /** The first-run look at past sessions has run. */
   scanned: boolean
   scanDeclined: boolean
@@ -2498,6 +2525,7 @@ export const register: Register = on => {
           notices: await attempt(() => read($, notices), [] as TeamNotice[]),
           rowAt: await attempt(() => read($, rowAt), 0),
           welcomed: await attempt(() => read($, isWelcomed), true),
+          welcome: (await attempt(() => read($, welcomeText), null)) ?? WELCOME,
           scanning: await attempt(() => read($, isScanning), false),
           audit: await attempt(() => read($, audit), null),
           health: await attempt(() => read($, health), null),
