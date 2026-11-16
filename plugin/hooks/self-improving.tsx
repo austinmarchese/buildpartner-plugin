@@ -855,7 +855,7 @@ async function dismiss($: Dollar, id: string): Promise<void> {
 // `prompt` gets the serving plugin's name (bp-dev or buildpartner) in place of {p}.
 const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: string; prompt: string; more: string }[] = [
   { key: 'pad', tool: 'build_pad', label: 'BuildPad', hint: "Create a plan before Claude builds, so you don't redo the work.", prompt: '/{p}:build-pad ', more: '/dashboard/build-pad' },
-  { key: 'social', tool: 'social_intel', label: 'Social Intel', hint: 'Research posts, creators and videos on X, Instagram and YouTube.', prompt: 'Use BuildPartner social intel to ', more: '/dashboard/social' },
+  { key: 'social', tool: 'social_intel', label: 'Social Intel', hint: 'Research posts, creators and videos on X, Instagram and YouTube.', prompt: '/{p}:social-research ', more: '/dashboard/social' },
   { key: 'web', tool: 'web_research', label: 'Web Research', hint: "Search the web and read any page, even ones Claude can't.", prompt: '/{p}:web-research ', more: '/dashboard/web' },
 ]
 
