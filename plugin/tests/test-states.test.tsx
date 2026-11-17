@@ -179,7 +179,7 @@ test('out of free runs, the expert question waits: only the upgrade row asks, an
   on('http.fetch', (_, e) =>
     e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -212,7 +212,7 @@ test('out of free runs with a trial offer: the row offers it, and Try 1 week fre
   on('http.fetch', (_, e) =>
     e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false, trial: TRIAL }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -239,7 +239,7 @@ test('a trial link that is not on this member\'s BuildPartner.ai is ignored: the
   on('http.fetch', (_, e) =>
     e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false, trial: { line: TRIAL.line, url: 'https://evil.test/trial/x' } }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -263,7 +263,7 @@ test('a BuildPartner.ai tool refused for credits mid-session: the plan is read a
   on('http.fetch', (_, e) =>
     e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: left, has_coach: false, trial: left > 0 ? null : TRIAL }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -295,7 +295,7 @@ test('Not now on "Free runs used up": back only when a tool is refused after 3 d
   on('http.fetch', (_, e) =>
     e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -336,7 +336,7 @@ test('after a Not now, a new session does not show "Free runs used up" until a t
   on('http.fetch', (_, e) =>
     e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -369,7 +369,7 @@ test('out of free runs, Use on a tool fills the prompt like any other time: no p
   on('http.fetch', (_, e) =>
     e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -409,7 +409,7 @@ test('See plans with no browser to open: the prompt fills with the open-dashboar
       ? (reports.push(String(e.init?.body ?? '')), { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } })
       : e.url.endsWith('/api/buildpartner/mod/notices')
       ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
-      : e.url.endsWith('/api/buildpartner/plan')
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
         ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
         : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
   )
@@ -419,8 +419,8 @@ test('See plans with no browser to open: the prompt fills with the open-dashboar
   await ui.press({ key: 'upgrade-bar' })
   // Every opener was tried with the signed-in plans page, then the catch-all.
   expect(ran.map(a => a[0])).toEqual(['open', 'xdg-open', 'rundll32'])
-  expect(ran[0]?.[1]).toBe('https://example.test/dashboard?upgrade=true&t=t')
-  expect(filled).toEqual(["/buildpartner:open-dashboard /dashboard?upgrade=true"])
+  expect(ran[0]?.[1]).toBe('https://example.test/dashboard/offers?from=mod&t=t')
+  expect(filled).toEqual(["/buildpartner:open-dashboard /dashboard/offers?from=mod"])
   expect(toasts.some(t => /Press Enter and Claude opens the page/.test(t))).toBe(true)
   // The team hears about it in Slack: which page and how each opener failed, nothing personal.
   await clock.advance(1)
@@ -428,7 +428,7 @@ test('See plans with no browser to open: the prompt fills with the open-dashboar
   const sent = JSON.parse(reports[0] as string) as { action: string; detail: string }
   expect(sent.action).toBe('browser did not open')
   // Directional only: the page by its path and how each opener failed, never what an opener printed.
-  expect(sent.detail).toBe('/dashboard · open exit 1, xdg-open exit 1, rundll32 exit 1')
+  expect(sent.detail).toBe('/dashboard/offers · open exit 1, xdg-open exit 1, rundll32 exit 1')
   expect(reports[0]).not.toContain('t=t')
   // The upgrade row stays, so See plans can be pressed again.
   expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')

@@ -1022,7 +1022,7 @@ async function refreshHealth($: Dollar): Promise<void> {
 async function refreshPlan($: Dollar): Promise<void> {
   const a = await auth($)
   if (!a.token) return
-  const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/plan`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
+  const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/plan?seen=row`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
   if (!r?.ok) return
   const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown; trial?: unknown }, null)
   if (!j || typeof j.plan !== 'string') return
@@ -1328,7 +1328,18 @@ async function upgradeOnRefusal($: Dollar): Promise<void> {
 }
 
 async function upgrade($: Dollar): Promise<void> {
-  await openDashboard($, '/dashboard?upgrade=true')
+  await openDashboard($, '/dashboard/offers?from=mod')
+}
+
+// The trial offer's "shown" step, reported once per session when the row is drawn (not when the plan is read).
+let upgradeShownReported = false
+function reportUpgradeShown($: Dollar): void {
+  if (upgradeShownReported) return
+  upgradeShownReported = true
+  void attempt(async () => {
+    const a = await auth($)
+    if (a.token) await $.http.fetch(`${a.apiBase}/api/buildpartner/trial?surface=mod`, { headers: { Authorization: `Bearer ${a.token}` } })
+  }, null)
 }
 
 /**
@@ -1928,7 +1939,8 @@ async function setTestState($: Dollar, key: string): Promise<string> {
 // (a suggestion, the expert question, a tool tip, the first-run review, an upgrade, a
 // notice) is one of these rows; the bar line itself holds no button but ▼.
 
-type RowButton = { key: string; label: string; kind: Kind; onPress: () => unknown }
+/** pressLabel: the name its presses are counted under on Admin > Mod, when the label is shared with other rows. */
+type RowButton = { key: string; label: string; pressLabel?: string; kind: Kind; onPress: () => unknown }
 type Row = {
   key: string
   icon: 'sparkle' | 'bulb' | 'bell' | 'play'
@@ -2007,6 +2019,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
   }
   if (out && !v.upgradeSkipped) {
     const trial = v.plan?.trial
+    if (trial) reportUpgradeShown($)
     rows.push(
       trial
         ? {
@@ -2017,7 +2030,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
             text: trial.line,
             plain: `Free runs used up. ${trial.line}`,
             primary: { key: 'trial-bar', label: 'Try 1 week free', kind: 'open', onPress: () => startTrial($, trial.url) },
-            secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => skipUpgrade($) },
+            secondary: { key: 'skip-upgrade', label: 'Not now', pressLabel: 'Not now (free runs used up)', kind: 'bar', onPress: () => skipUpgrade($) },
           }
         : {
             key: 'upgrade-row',
@@ -2025,7 +2038,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
             header: 'Free runs used up',
             text: 'Upgrade to keep using Expert Advice and the tools.',
             primary: { key: 'upgrade-bar', label: 'See plans', kind: 'open', onPress: () => upgrade($) },
-            secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => skipUpgrade($) },
+            secondary: { key: 'skip-upgrade', label: 'Not now', pressLabel: 'Not now (free runs used up)', kind: 'bar', onPress: () => skipUpgrade($) },
           },
     )
   }
@@ -2090,8 +2103,8 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
             ''
           )}
         </Box>
-        {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.label, r.primary.onPress)} /> : ''}
-        {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={click($, r.secondary.kind, r.secondary.label, r.secondary.onPress)} /> : ''}
+        {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.pressLabel ?? r.primary.label, r.primary.onPress)} /> : ''}
+        {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={click($, r.secondary.kind, r.secondary.pressLabel ?? r.secondary.label, r.secondary.onPress)} /> : ''}
         {next}
       </Box>
     )
@@ -2104,8 +2117,8 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
         {cut(r.plain ?? r.text, Math.max(10, room - buttons - count.length))}
         <Text dimColor>{count}</Text>
       </Text>
-      {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.label, r.primary.onPress)} /> : ''}
-      {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={click($, r.secondary.kind, r.secondary.label, r.secondary.onPress)} /> : ''}
+      {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.pressLabel ?? r.primary.label, r.primary.onPress)} /> : ''}
+      {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={click($, r.secondary.kind, r.secondary.pressLabel ?? r.secondary.label, r.secondary.onPress)} /> : ''}
       {next}
     </Box>
   )
