@@ -91,6 +91,12 @@ export type MemberPlan = {
   creditsLeft: number | null
   /** An Executive member with a coach. */
   hasCoach: boolean
+  /**
+   * The 7-day free trial, when this member is out of free credits and can have one:
+   * the line the upgrade row shows and a signed link straight to checkout (24 hours,
+   * no token in it). Null or absent otherwise.
+   */
+  trial?: { line: string; url: string } | null
   /** When it was read (epoch ms). */
   at: number
 }
