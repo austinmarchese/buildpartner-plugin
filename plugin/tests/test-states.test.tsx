@@ -280,6 +280,78 @@ test('a BuildPartner.ai tool refused for credits mid-session: the plan is read a
   await ui.unmount()
 })
 
+test('Not now on "Free runs used up": back only when a tool is refused after 3 days, then 7', async ($, on) => {
+  const store = new Map<string, unknown>([['welcomed', true], ['scanned', true]])
+  on('store.get', (_, e) => ({ value: store.get((e as { key: string }).key) }) as never)
+  on('store.set', (_, e) => (store.set((e as { key: string }).key, (e as { value: unknown }).value), { value: undefined }) as never)
+  on('store.delete', (_, e) => (store.delete((e as { key: string }).key), { value: undefined }) as never)
+  on('store.keys', () => ({ value: [...store.keys()] }) as never)
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  on('tool.call', () => ({ result: JSON.stringify({ limit_reached: true, message: "You've used all your free credits." }) }))
+  const refuse = async () => {
+    await $.tool.call({ tool: 'mcp__plugin_bp-dev_tools__web_research', action: 'search' } as never)
+    await clock.advance(1)
+  }
+  const quietDays = async () => (Number(store.get('upgradeQuietUntil')) - clock.now()) / 86_400_000
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeDefined()
+  await ui.press({ key: 'skip-upgrade' })
+  expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeUndefined()
+  expect(Math.round(await quietDays())).toBe(3)
+  // Inside the quiet time a refusal does not bring it back.
+  await refuse()
+  expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeUndefined()
+  // Quiet time over: a refusal brings it back.
+  store.set('upgradeQuietUntil', 0)
+  await refuse()
+  expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeDefined()
+  // The second Not now holds for 7 days.
+  await ui.press({ key: 'skip-upgrade' })
+  expect(Math.round(await quietDays())).toBe(7)
+  await ui.unmount()
+})
+
+test('after a Not now, a new session does not show "Free runs used up" until a tool is refused', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true, upgradeSkips: 1, upgradeQuietUntil: 1 })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  on('tool.call', () => ({ result: JSON.stringify({ limit_reached: true, message: "You've used all your free credits." }) }))
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  // The quiet time is long over, but nothing was refused yet: no row.
+  expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeUndefined()
+  await $.tool.call({ tool: 'mcp__plugin_bp-dev_tools__web_research', action: 'search' } as never)
+  await clock.advance(1)
+  expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeDefined()
+  await ui.unmount()
+})
+
 const RUN_FAILS = { value: { exitCode: 1, stdout: '', stderr: 'no browser', isStdoutTruncated: false, isStderrTruncated: false } }
 
 test('See plans with no browser to open: the prompt fills with the open-dashboard command for the plans page, no token', async ($, on) => {
