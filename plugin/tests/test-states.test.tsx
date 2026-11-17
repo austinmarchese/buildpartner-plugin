@@ -197,6 +197,89 @@ test('out of free runs, the expert question waits: only the upgrade row asks, an
   await ui.unmount()
 })
 
+const TRIAL = { line: 'Try Pro free for 1 week, then $49.99/mo. Cancel anytime before Nov 23 and you pay nothing.', url: 'https://example.test/trial/abc.def?from=mod' }
+
+test('out of free runs with a trial offer: the row offers it, and Try 1 week free opens its checkout link', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  const ran: string[][] = []
+  on('process.run', (_, e) => (ran.push([...e.argv]), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false, trial: TRIAL }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect((await ui.find({ type: 'Button', key: 'trial-bar' }))?.text).toBe('Try 1 week free')
+  expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Cancel anytime before Nov 23/ })).toBeDefined()
+  await ui.press({ key: 'trial-bar' })
+  // Straight to the trial's checkout link: no sign-in token, not the plans page.
+  expect(ran[0]).toEqual(['open', TRIAL.url])
+  await ui.unmount()
+})
+
+test('a trial link that is not on this member\'s BuildPartner.ai is ignored: the row stays See plans', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false, trial: { line: TRIAL.line, url: 'https://evil.test/trial/x' } }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
+  expect(await ui.find({ type: 'Button', key: 'trial-bar' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a BuildPartner.ai tool refused for credits mid-session: the plan is read again and the row shows at once', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  let left = 1
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: left, has_coach: false, trial: left > 0 ? null : TRIAL }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  on('tool.call', () => ({ result: JSON.stringify({ limit_reached: true, message: `You've used all your free credits. ${TRIAL.line}` }) }))
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect(await ui.find({ type: 'Button', key: 'trial-bar' })).toBeUndefined()
+  // The member spends the last credit elsewhere; Web Research is then refused.
+  left = 0
+  await $.tool.call({ tool: 'mcp__plugin_buildpartner_tools__web_research', action: 'scrape', url: 'https://acme.test' } as never)
+  await clock.advance(1)
+  expect((await ui.find({ type: 'Button', key: 'trial-bar' }))?.text).toBe('Try 1 week free')
+  await ui.unmount()
+})
+
 const RUN_FAILS = { value: { exitCode: 1, stdout: '', stderr: 'no browser', isStdoutTruncated: false, isStderrTruncated: false } }
 
 test('See plans with no browser to open: the prompt fills with the open-dashboard command for the plans page, no token', async ($, on) => {

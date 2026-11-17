@@ -855,7 +855,7 @@ async function dismiss($: Dollar, id: string): Promise<void> {
 // `prompt` gets the serving plugin's name (bp-dev or buildpartner) in place of {p}.
 const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: string; prompt: string; more: string }[] = [
   { key: 'pad', tool: 'build_pad', label: 'BuildPad', hint: "Create a plan before Claude builds, so you don't redo the work.", prompt: '/{p}:build-pad ', more: '/dashboard/build-pad' },
-  { key: 'social', tool: 'social_intel', label: 'Social Intel', hint: 'Research posts, creators and videos on X, Instagram and YouTube.', prompt: 'Use BuildPartner social intel to ', more: '/dashboard/social' },
+  { key: 'social', tool: 'social_intel', label: 'Social Intel', hint: 'Research posts, creators and videos on X, Instagram and YouTube.', prompt: '/{p}:social-research ', more: '/dashboard/social' },
   { key: 'web', tool: 'web_research', label: 'Web Research', hint: "Search the web and read any page, even ones Claude can't.", prompt: '/{p}:web-research ', more: '/dashboard/web' },
 ]
 
@@ -1024,7 +1024,7 @@ async function refreshPlan($: Dollar): Promise<void> {
   if (!a.token) return
   const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/plan`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
   if (!r?.ok) return
-  const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown }, null)
+  const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown; trial?: unknown }, null)
   if (!j || typeof j.plan !== 'string') return
   const now = await $.clock.now()
   await update($, plan, () => ({
@@ -1032,8 +1032,33 @@ async function refreshPlan($: Dollar): Promise<void> {
     paid: j.paid === true,
     creditsLeft: typeof j.credits_left === 'number' ? j.credits_left : null,
     hasCoach: j.has_coach === true,
+    trial: cleanTrial(j.trial, a.apiBase),
     at: now,
   }))
+}
+
+/** The free trial offer from the plan, or null. Its link must be a /trial/ page on this member's BuildPartner.ai. */
+function cleanTrial(raw: unknown, apiBase: string): { line: string; url: string } | null {
+  const t = raw && typeof raw === 'object' ? (raw as { line?: unknown; url?: unknown }) : null
+  const line = plainLine(t?.line, 200)
+  const url = typeof t?.url === 'string' ? t.url : ''
+  return line && url.startsWith(`${apiBase}/trial/`) && !/\s/.test(url) ? { line, url } : null
+}
+
+/** Try 1 week free on the upgrade row: opens the link the row drew. No link (a preview), the plans page as before. */
+async function startTrial($: Dollar, url: string): Promise<void> {
+  if (!url) return upgrade($)
+  await openUrl($, url)
+}
+
+/** A BuildPartner.ai tool answered that the free credits are used up: read the plan now, so the upgrade row shows at once. */
+function refusedForCredits(result: unknown): boolean {
+  try {
+    // The tool's text is itself JSON, so its quotes arrive escaped (\"limit_reached\":true).
+    return /limit_reached\\*"\s*:\s*true/.test(JSON.stringify(result))
+  } catch {
+    return false
+  }
 }
 
 // ---- Notifications from the team (Admin > Mod) ----
@@ -1962,14 +1987,28 @@ function rowsAbove($: Dollar, v: View): Row[] {
     })
   }
   if (out && !v.upgradeSkipped) {
-    rows.push({
-      key: 'upgrade-row',
-      icon: 'bulb',
-      header: 'Free runs used up',
-      text: 'Upgrade to keep using Expert Advice and the tools.',
-      primary: { key: 'upgrade-bar', label: 'See plans', kind: 'open', onPress: () => upgrade($) },
-      secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => skipUpgrade($) },
-    })
+    const trial = v.plan?.trial
+    rows.push(
+      trial
+        ? {
+            // The 7-day free trial: one button straight to checkout, not the plans page.
+            key: 'upgrade-row',
+            icon: 'bulb',
+            header: 'Free runs used up',
+            text: trial.line,
+            plain: `Free runs used up. ${trial.line}`,
+            primary: { key: 'trial-bar', label: 'Try 1 week free', kind: 'open', onPress: () => startTrial($, trial.url) },
+            secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => skipUpgrade($) },
+          }
+        : {
+            key: 'upgrade-row',
+            icon: 'bulb',
+            header: 'Free runs used up',
+            text: 'Upgrade to keep using Expert Advice and the tools.',
+            primary: { key: 'upgrade-bar', label: 'See plans', kind: 'open', onPress: () => upgrade($) },
+            secondary: { key: 'skip-upgrade', label: 'Not now', kind: 'bar', onPress: () => skipUpgrade($) },
+          },
+    )
   }
   for (const n of v.notices) {
     rows.push({
@@ -2443,6 +2482,16 @@ export const register: Register = on => {
       // The tool's arguments sit beside `tool` on the event (e.url for WebFetch).
       const call = e as unknown as { tool: string } & Record<string, unknown>
       $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call), undefined))
+      // One of our tools refused for credits: read the plan once it answers, so the upgrade row shows now.
+      if (call.tool.startsWith(`mcp__plugin_${$.plugin.name}_tools__`)) {
+        const done = await next(e)
+        try {
+          if (refusedForCredits(done)) $.clock.after(0, () => void attempt(() => refreshPlan($), undefined))
+        } catch {
+          // The call's result goes back whatever happens here.
+        }
+        return done
+      }
       // An AI Audit run saves its findings after each stage: the row reads them once this call is done.
       const touched = auditCall(call)
       if (!touched) return next(e)
@@ -2786,6 +2835,7 @@ const PREVIEWS: readonly { key: string; label: string }[] = [
   { key: '', label: 'Real' },
   { key: 'free', label: 'Free, credits left' },
   { key: 'out', label: 'Free, out of runs' },
+  { key: 'trial', label: 'Free, out of runs, trial offer' },
   { key: 'pro', label: 'Pro' },
   { key: 'exec', label: 'Executive (coach)' },
   { key: 'signedout', label: 'Not signed in' },
@@ -2802,6 +2852,9 @@ function withPreview(v: View, key: string): View {
       return { ...v, plan: plan('Free', false, 3, false) }
     case 'out':
       return { ...v, plan: plan('Free', false, 0, false), list: [] }
+    case 'trial':
+      // Drawing only: Try 1 week free on the preview opens the plans page, never a checkout.
+      return { ...v, plan: { ...plan('Free', false, 0, false), trial: { line: 'Try Pro free for 1 week, then $49.99/mo. Cancel anytime before Nov 23 and you pay nothing.', url: '' } }, list: [] }
     case 'pro':
       return { ...v, plan: plan('Pro', true, null, false) }
     case 'exec':
