@@ -1042,7 +1042,9 @@ function cleanTrial(raw: unknown, apiBase: string): { line: string; url: string 
   const t = raw && typeof raw === 'object' ? (raw as { line?: unknown; url?: unknown }) : null
   const line = plainLine(t?.line, 200)
   const url = typeof t?.url === 'string' ? t.url : ''
-  return line && url.startsWith(`${apiBase}/trial/`) && !/\s/.test(url) ? { line, url } : null
+  // The bare domain and www are the same site: accept the trial link on either.
+  const hosts = [apiBase, apiBase.replace('://www.', '://'), apiBase.replace('://buildpartner.ai', '://www.buildpartner.ai')]
+  return line && hosts.some(h => url.startsWith(`${h}/trial/`)) && !/\s/.test(url) ? { line, url } : null
 }
 
 /** Try 1 week free on the upgrade row: opens the link the row drew. No link (a preview), the plans page as before. */
@@ -1300,25 +1302,42 @@ function isOutOfRuns(pl: MemberPlan | null): boolean {
   return !!pl && !pl.paid && pl.creditsLeft !== null && pl.creditsLeft <= 0
 }
 
-// How long Not now keeps "Free runs used up" away: a few days, never every session.
-const UPGRADE_QUIET_MS = 3 * 86_400_000
+// "Free runs used up" after Not now: it never comes back on its own, only when a BuildPartner.ai
+// tool is refused for credits, and not before the quiet time is up: 3 days after the first Not
+// now, 7 days after each one since.
+const DAY_MS = 86_400_000
+export function upgradeQuietMs(skips: number): number {
+  return (skips <= 1 ? 3 : 7) * DAY_MS
+}
 
-/** Not now on the upgrade row: hidden now and for the next few days, on every session. */
+/** Not now on the upgrade row: hidden until a tool is refused after the quiet time (upgradeQuietMs). */
 async function skipUpgrade($: Dollar): Promise<void> {
   await update($, upgradeSkipped, () => true)
-  await attempt(async () => $.store.set('upgradeQuietUntil', (await $.clock.now()) + UPGRADE_QUIET_MS), undefined)
+  await attempt(async () => {
+    const skips = Number((await $.store.get('upgradeSkips')) ?? 0) + 1
+    await $.store.set('upgradeSkips', skips)
+    await $.store.set('upgradeQuietUntil', (await $.clock.now()) + upgradeQuietMs(skips))
+  }, undefined)
+}
+
+/** A tool was refused for credits: bring the row back if Not now's quiet time is up, then read the plan. */
+async function upgradeOnRefusal($: Dollar): Promise<void> {
+  const quietUntil = Number((await attempt(() => $.store.get('upgradeQuietUntil'), 0)) ?? 0)
+  if ((await $.clock.now()) >= quietUntil) await update($, upgradeSkipped, () => false)
+  await refreshPlan($)
 }
 
 async function upgrade($: Dollar): Promise<void> {
   await openDashboard($, '/dashboard?upgrade=true')
 }
 
-/** Runs a credit tool, or opens the upgrade page when the free runs are used up. */
-async function creditTool($: Dollar, run: () => unknown): Promise<void> {
-  if (isOutOfRuns(await attempt(() => read($, plan), null))) {
-    await upgrade($)
-    return
-  }
+/**
+ * Runs a credit tool, with or without free runs left. Out of runs, the tool's own refusal
+ * explains why in the chat and carries the offer (the free trial or the plans page), and the
+ * "Free runs used up" row follows it (upgradeOnRefusal). Opening the plans page straight from
+ * Use read as a jump nobody asked for.
+ */
+async function creditTool(_$: Dollar, run: () => unknown): Promise<void> {
   await run()
 }
 
@@ -2333,11 +2352,11 @@ export const register: Register = on => {
       // The last rollout answer on this machine; none yet means show.
       const lastShow = await $.store.get('rolloutShow')
       await update($, rolloutOn, () => lastShow !== false)
-      // Not now on "Free runs used up" holds for UPGRADE_QUIET_MS across sessions, so free members
-      // are not asked every session. Pressing a paid tool while out still opens the upgrade page.
+      // After any Not now, "Free runs used up" stays away at session start: it comes back only when
+      // a tool is refused after the quiet time (upgradeOnRefusal). Before any Not now, it shows.
+      const skips = Number((await $.store.get('upgradeSkips')) ?? 0)
       const quietUntil = Number((await $.store.get('upgradeQuietUntil')) ?? 0)
-      const nowMs = await $.clock.now()
-      await update($, upgradeSkipped, () => nowMs < quietUntil)
+      await update($, upgradeSkipped, () => skips > 0 || quietUntil > 0)
       await saveLedger($, await ledger($))
     }, undefined)
     // Each registration stands alone: a refused command never costs the tool.
@@ -2486,7 +2505,7 @@ export const register: Register = on => {
       if (call.tool.startsWith(`mcp__plugin_${$.plugin.name}_tools__`)) {
         const done = await next(e)
         try {
-          if (refusedForCredits(done)) $.clock.after(0, () => void attempt(() => refreshPlan($), undefined))
+          if (refusedForCredits(done)) $.clock.after(0, () => void attempt(() => upgradeOnRefusal($), undefined))
         } catch {
           // The call's result goes back whatever happens here.
         }
