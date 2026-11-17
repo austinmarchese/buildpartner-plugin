@@ -18,10 +18,10 @@ Run my AI Audit. Two stages: my setup first, then my work. The same command cont
 3. Read the whole file at `file` with the Read tool and follow it exactly, from its first line to its last. That file is the audit. Don't summarize it to me and don't skip its checkpoints.
 
 4. Before the first step of the file, tell me in one line what is about to happen:
-   - `mode` "first": "Stage 1 of 2 is your setup. Stage 2 is your work. I ask before I save anything."
-   - `mode` "continue": "Picking up where your audit stopped."
-   - `mode` "rerun": "Running your audit again. I'll check which fixes you've set up and look for what's new."
-   - `mode` "setup": "Checking your setup. No email is read. I ask before I save anything."
+   - `mode` "first": "Stage 1 of 2 is your setup. Stage 2 is your work. Your findings save to your BuildPartner page as they finish; you can hide any of them there."
+   - `mode` "continue": "Picking up where your audit stopped. Your findings save to your BuildPartner page as they finish; you can hide any of them there."
+   - `mode` "rerun": "Running your audit again. I'll check which fixes you've set up and look for what's new. Your findings save to your BuildPartner page as they finish; you can hide any of them there."
+   - `mode` "setup": "Checking your setup. No email is read. Your findings save to your BuildPartner page as they finish; you can hide any of them there."
 
 ## If something goes wrong
 

@@ -20,11 +20,9 @@ Always load through the MCP tool, never from memory or a hardcoded copy. The con
 
 If any MCP tool call is blocked with an upgrade/limit message (`"limit_reached"` or `"locked": true`), STOP immediately. Do not invent locked content, do not summarize the build from memory, do not use any fallback. Instead:
 
-1. Read `~/.buildpartner/auth.json` to get the token and the `api_base` (if present, otherwise use `https://buildpartner.ai`).
-2. Run: `open "BASE_URL/dashboard?t=TOKEN_HERE&upgrade=true"` (replace BASE_URL with api_base or the default, and TOKEN_HERE with the actual token).
-3. Tell the user the `message` from the blocked tool result (it explains exactly what ran out), then:
-
-> "I've opened your dashboard so you can upgrade and keep going."
+1. Tell the user the `message` from the blocked tool result as written (it explains exactly what ran out). Put any link in it (a free trial link or the plans page) on its own line so they can click it.
+2. Ask if they want it opened. If they say yes, run `open "<that link>"`. If the message has no link, offer `https://www.buildpartner.ai/dashboard/offers` instead.
+3. Never read `~/.buildpartner/auth.json` and never put a token in a link.
 
 Nothing else. No apologies, no alternatives, no partial content.
 
