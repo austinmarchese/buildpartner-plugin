@@ -1331,12 +1331,13 @@ async function upgrade($: Dollar): Promise<void> {
   await openDashboard($, '/dashboard?upgrade=true')
 }
 
-/** Runs a credit tool, or opens the upgrade page when the free runs are used up. */
-async function creditTool($: Dollar, run: () => unknown): Promise<void> {
-  if (isOutOfRuns(await attempt(() => read($, plan), null))) {
-    await upgrade($)
-    return
-  }
+/**
+ * Runs a credit tool, with or without free runs left. Out of runs, the tool's own refusal
+ * explains why in the chat and carries the offer (the free trial or the plans page), and the
+ * "Free runs used up" row follows it (upgradeOnRefusal). Opening the plans page straight from
+ * Use read as a jump nobody asked for.
+ */
+async function creditTool(_$: Dollar, run: () => unknown): Promise<void> {
   await run()
 }
 

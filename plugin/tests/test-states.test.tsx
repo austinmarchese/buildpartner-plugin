@@ -352,6 +352,37 @@ test('after a Not now, a new session does not show "Free runs used up" until a t
   await ui.unmount()
 })
 
+test('out of free runs, Use on a tool fills the prompt like any other time: no plans page', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  const ran: string[][] = []
+  const filled: string[] = []
+  on('process.run', (_, e) => (ran.push([...e.argv]), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('prompt.read', () => ({ value: { text: '' } }) as never)
+  on('prompt.fill', (_, e) => (filled.push(e.text), { isFilled: true, text: e.text, cursor: e.text.length }))
+  on('tool.list', () => ({ value: [{ name: 'mcp__plugin_bp-dev_tools__web_research' }] }) as never)
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  await ui.press({ key: 'expand' })
+  await ui.press({ key: 'tool-btn-web' })
+  expect(filled.some(t => /web-research/.test(t))).toBe(true)
+  expect(ran).toHaveLength(0)
+  await ui.unmount()
+})
+
 const RUN_FAILS = { value: { exitCode: 1, stdout: '', stderr: 'no browser', isStdoutTruncated: false, isStderrTruncated: false } }
 
 test('See plans with no browser to open: the prompt fills with the open-dashboard command for the plans page, no token', async ($, on) => {
