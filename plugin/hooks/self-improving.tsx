@@ -2823,10 +2823,8 @@ function healthLines(v: View): { label: string; value: string; tone?: string }[]
 function healthFooter(v: View): string {
   const h = v.health
   if (!h) return ''
-  // Two different things, named plainly: what BuildPartner.ai installs, and the member's own skills here.
-  const parts = [`BuildPartner.ai skills and plugin updated ${when(v.now, h.pluginUpdatedAt)}`]
-  if (h.skillCount) parts.push(`Skills in this project changed ${when(v.now, h.skillsUpdatedAt)}`)
-  return parts.join(' · ')
+  // What BuildPartner.ai installed here, and which version, so a member (or the team) can tell at a glance.
+  return `BuildPartner.ai ${h.version ? `v${h.version} · ` : ''}updated ${when(v.now, h.pluginUpdatedAt)}`
 }
 
 // Dev builds only: states the team can switch the bar into to see how it looks.
