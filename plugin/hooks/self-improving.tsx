@@ -25,7 +25,9 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun, AuditRun, WelcomeText } from '../types'
+import { accept, decide, dismiss as dismissNudgeState, newState, nudgeEventBody, readPlanExtras } from './mod-nudges'
+import type { BpTool, Nudge, NudgeEvent, NudgeKey, NudgeState, UsedTool } from './mod-nudges'
+import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun, AuditRun, StarterLimit, WelcomeText } from '../types'
 
 type Dollar = EngineInterface
 
@@ -62,6 +64,8 @@ const last = atom({ plugin: 'buildpartner', key: 'last' } as const, null as Refl
 const expert = atom({ plugin: 'buildpartner', key: 'expert' } as const, null as ExpertFlag | null, { shape: 'e-1' })
 // A BuildPartner.ai tool this session could use instead of what it is doing (Expert Advice's tool tip).
 const toolTip = atom({ plugin: 'buildpartner', key: 'toolTip' } as const, null as ToolTip | null, { shape: 'tt-1' })
+// A mod nudge other than the expert question and the tool tips above (see mod-nudges.ts): the row it draws.
+const nudge = atom({ plugin: 'buildpartner', key: 'nudge' } as const, null as Nudge | null, { shape: 'nu-1' })
 // Bumped on the minute so "ago" figures redraw.
 const tick = atom({ plugin: 'buildpartner', key: 'tick' } as const, 0)
 // The BuildPartner.ai tools connected in this session, as `key:plugin` (see BP_TOOLS).
@@ -70,6 +74,8 @@ const isHidden = atom({ plugin: 'buildpartner', key: 'isHidden' } as const, fals
 const isExpanded = atom({ plugin: 'buildpartner', key: 'isExpanded' } as const, false)
 // The member said Not now to the upgrade row this session: it stays out of the way (the expanded view keeps it).
 const upgradeSkipped = atom({ plugin: 'buildpartner', key: 'upgradeSkipped' } as const, false)
+// A Starter daily limit a tool just refused for: the "Today's limit reached" row, until midnight UTC or Dismiss.
+const starterLimit = atom({ plugin: 'buildpartner', key: 'starterLimit' } as const, null as StarterLimit | null, { shape: 'sl-1' })
 // The first-run look at past sessions has run (or been skipped) for this member.
 const scanned = atom({ plugin: 'buildpartner', key: 'scanned' } as const, false)
 // The member said Not now to reviewing past sessions: the offer stays out of the way (the expanded view keeps it).
@@ -212,7 +218,8 @@ async function signInFromInstallCode($: Dollar): Promise<boolean> {
 
 // The criteria are improve-system's own (Mode 5: suggestion types, never a
 // plugin's skill) and the shared rule that a single instance is not a learning.
-const SYSTEM = `You are the reviewer behind BuildPartner.ai's Self-Improving System, a quiet reviewer inside a BuildPartner.ai member's Claude Code project. You read a slice of a live Claude Code conversation and name lessons for the member's SYSTEM (their skills, CLAUDE.md, rules, wiki), never for the task at hand. You apply the criteria of /buildpartner:improve-system.
+// {p} is this plugin's name (buildpartner or bp-dev), filled in where the prompt is sent.
+const SYSTEM = `You are the reviewer behind BuildPartner.ai's Self-Improving System, a quiet reviewer inside a BuildPartner.ai member's Claude Code project. You read a slice of a live Claude Code conversation and name lessons for the member's SYSTEM (their skills, CLAUDE.md, rules, wiki), never for the task at hand. You apply the criteria of /{p}:improve-system.
 
 Look for:
 - Corrections: the member pushes back on what Claude did ("no, not like that", "I told you", "don't ..."), revealing a missing rule or step.
@@ -522,7 +529,7 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
     const { model, selfOn, expertOn } = await settings($)
     stop = new AbortController()
     const reply = await $.model.complete(
-      { model, system: [{ text: SYSTEM, cache: true }], prompt, maxTokens: 900, effort: 'medium', timeoutMs: why === 'compact' ? 30_000 : 90_000 },
+      { model, system: [{ text: SYSTEM.replace('{p}', $.plugin.name), cache: true }], prompt, maxTokens: 900, effort: 'medium', timeoutMs: why === 'compact' ? 30_000 : 90_000 },
       { signal: stop.signal },
     )
     const tokens = reply.usage ? reply.usage.input_tokens + reply.usage.output_tokens + (reply.usage.cache_creation_input_tokens ?? 0) : 0
@@ -537,8 +544,7 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
     const now = await $.clock.now()
     const parsed = parseReply(reply.text)
     if (parsed.expert && expertOn) {
-      const ex = parsed.expert
-      await update($, expert, () => ({ ...ex, at: now }))
+      await raiseExpert($, parsed.expert)
     }
 
     // Read the ledger again now, not before the call: an Apply, a Dismiss or another
@@ -615,7 +621,9 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
 }
 
 // The first Apply starts this prompt; each later Apply, while it is still unsent, adds a line to it.
-const HANDOFF_HEAD = '/buildpartner:improve-system Apply these Self-Improving System suggestions, and show me each edit before you write it:'
+function handoffHead($: Dollar): string {
+  return `/${$.plugin.name}:improve-system Apply these Self-Improving System suggestions, and show me each edit before you write it:`
+}
 
 function handoffLine(p: ReflectPattern): string {
   const seen = `seen in ${p.sessions.length} session${p.sessions.length === 1 ? '' : 's'}${p.corrections ? `, ${p.corrections} correction${p.corrections === 1 ? '' : 's'}` : ''}`
@@ -697,7 +705,7 @@ async function walkThrough($: Dollar): Promise<void> {
   await handOver(
     $,
     `${attach}Go through my Self-Improving System suggestions one at a time. For each, ask me with AskUserQuestion: Apply, Not now, or Dismiss. ` +
-      `On Apply, make the change through /buildpartner:improve-system (show me the edit first). Record every decision with the resolve_suggestion tool.`,
+      `On Apply, make the change through /${$.plugin.name}:improve-system (show me the edit first). Record every decision with the resolve_suggestion tool.`,
   )
 }
 
@@ -736,16 +744,17 @@ const DEMO: ReflectPattern = {
 async function apply($: Dollar, id: string): Promise<void> {
   if (id.startsWith('demo-')) {
     await setStatus($, id, 'dismissed')
-    $.ui.toast(`${NAME}: demo. A real Apply fills /buildpartner:improve-system with the change.`)
+    $.ui.toast(`${NAME}: demo. A real Apply fills /${$.plugin.name}:improve-system with the change.`)
     return
   }
   const p = (await ledger($))[id]
   if (!p) return
   // An earlier Apply still waiting in the prompt: add to it instead of replacing it.
   const draft = (await attempt(() => $.prompt.read(), { text: '', cursor: 0 })).text
-  const isOpen = draft.includes(HANDOFF_HEAD) && !draft.includes(p.change)
-  if (draft.includes(HANDOFF_HEAD) && !isOpen) return
-  const ok = isOpen ? await handOver($, `\n${handoffLine(p)}`, 'append') : await handOver($, `${HANDOFF_HEAD}\n${handoffLine(p)}`)
+  const head = handoffHead($)
+  const isOpen = draft.includes(head) && !draft.includes(p.change)
+  if (draft.includes(head) && !isOpen) return
+  const ok = isOpen ? await handOver($, `\n${handoffLine(p)}`, 'append') : await handOver($, `${head}\n${handoffLine(p)}`)
   if (ok) {
     await setStatus($, id, 'applied')
     // Held until the member sends the filled prompt: a press alone never instructs Claude.
@@ -891,13 +900,24 @@ async function messageCoach($: Dollar): Promise<void> {
   await openDashboard($, '/dashboard/executive?coach=1')
 }
 
-/** Not now: drops the flagged question, and ends the dev "expert" preview, which would draw it again. */
+/** Tells BuildPartner.ai a nudge was shown, clicked or put away: its key only, never what set it off. Fire and forget. */
+function reportNudge($: Dollar, phase: 'shown' | 'clicked' | 'dismissed', key: NudgeKey): void {
+  void attempt(() => reportEvent($, 'nudge', undefined, undefined, { phase, key }), undefined)
+}
+
+/** Not now: drops the flagged question, waits a day before the next one, and ends the dev "expert" preview, which would draw it again. */
 async function skipExpert($: Dollar): Promise<void> {
+  const flagged = await attempt(() => read($, expert), null)
   await update($, expert, () => null)
+  if (!flagged) return
+  reportNudge($, 'dismissed', 'expert_decision')
+  const now = await $.clock.now()
+  const dismissedAt = dismissNudgeState(await nudgeState($), 'expert_decision', now).dismissedAt
+  await attempt(() => $.store.set('nudgesDismissed', dismissedAt), undefined)
 }
 
 /**
- * Ask the expert: hands the flagged question to /buildpartner:expert-advice. With none flagged it
+ * Ask the expert: hands the flagged question to /<plugin>:expert-advice. With none flagged it
  * fills the bare command, keeping anything the member already typed after it, so they can add
  * their own question; on its own, the skill works from the decision in the conversation.
  */
@@ -907,77 +927,142 @@ async function askExpert($: Dollar): Promise<void> {
     return
   }
   const ex = await attempt(() => read($, expert), null)
-  if (await handOver($, `/buildpartner:expert-advice ${ex?.question ?? ''}`, 'prepend')) {
-    if (ex) await update($, expert, () => null)
+  if (await handOver($, `/${$.plugin.name}:expert-advice ${ex?.question ?? ''}`, 'prepend')) {
+    if (ex) {
+      await update($, expert, () => null)
+      reportNudge($, 'clicked', 'expert_decision')
+    }
   }
 }
 
-// ---- Tool tips (part of Expert Advice) ----
+// ---- Mod nudges (Expert Advice's tool tips and the rest) ----
 //
-// Watches which of Claude's own tools this session calls, and suggests the
-// BuildPartner.ai tool that does the job better: lots of web fetching or
-// searching (Web Research), reading X, Instagram or YouTube (Social Intel), or
-// a plan just written (BuildPad). Tool names and URL hosts only, never what was
-// fetched. At most one tip a week per tool, never while the expert nudge shows,
-// never for a tool this session already used or the member's plan can't run.
+// mod-nudges.ts holds every rule: when a nudge shows, how long it stays away, what it says and what it
+// fills. This file feeds it events (decide), keeps the cooldown clock in $.store, and draws the row.
+// A nudge only fills the prompt box (handOver), never sends. Tool names, URL hosts and the member's
+// words are read in memory and dropped; only { kind, nudge_key } goes to BuildPartner.ai (reportNudge).
 
 const TIP_COPY: Record<ToolTip['key'], { line: string; button: string }> = {
   web: { line: "You're doing a lot of web research. BuildPartner.ai Web Research reads any page, including ones that block bots.", button: 'Try Web Research' },
   social: { line: 'Reading X, Instagram or YouTube? Social Intel gets the posts, stats, comments and transcripts.', button: 'Try Social Intel' },
   pad: { line: 'Turn this plan into a page you and your team can comment on.', button: 'Make a BuildPad' },
 }
-const TIP_WEB_CALLS = 3
-const TIP_EVERY_MS = 7 * 86_400_000
-const SOCIAL_HOST = /(^|\.)(x\.com|twitter\.com|instagram\.com|youtube\.com|youtu\.be)$/i
-// This session's counts (a reload starts them over, which only delays a tip).
-let webCalls = 0
-const usedTools = new Set<string>()
+// The row's title for the nudges that have no tool of their own in BP_TOOLS.
+const NUDGE_HEADER: Partial<Record<NudgeKey, string>> = {
+  fetch_failed: 'Web Research',
+  social_talk: 'Social Research',
+  audit_stale: 'AI Audit',
+  plan_loop: 'BuildPad',
+  competitor_urls: 'Competitor Research',
+}
+// An older mod kept the tips' cooldown under 'toolTipsShown', by tool: read it too, so no tip shows twice in a week.
+const OLD_TIP_KEYS: Record<string, NudgeKey> = { web: 'tip_web', social: 'tip_social', pad: 'tip_pad' }
 
-function hostOf(raw: unknown): string {
-  try {
-    return new URL(String(raw ?? '')).hostname
-  } catch {
-    return ''
+// This session's counters (a reload starts them over, which only delays a nudge), and the tools used.
+let session: NudgeState | null = null
+const usedTools = new Set<UsedTool>()
+
+/** The nudge on screen now, from the atoms the rows are drawn from: the one source of truth for `up`. */
+async function nudgeUp($: Dollar): Promise<NudgeKey | null> {
+  const n = await attempt(() => read($, nudge), null)
+  if (n) return n.key
+  const tip = await attempt(() => read($, toolTip), null)
+  if (tip) return `tip_${tip.key}` as NudgeKey
+  return (await attempt(() => read($, expert), null)) ? 'expert_decision' : null
+}
+
+/** mod-nudges' state now: this session's counters, with the clocks from $.store and everything else read fresh. */
+async function nudgeState($: Dollar): Promise<NudgeState> {
+  const base = session ?? newState($.plugin.name)
+  const shown = ((await attempt(() => $.store.get('nudgesShown'), undefined)) ?? {}) as Record<string, number>
+  const old = ((await attempt(() => $.store.get('toolTipsShown'), undefined)) ?? {}) as Record<string, number>
+  const shownAt: NudgeState['shownAt'] = { ...shown }
+  for (const [tool, key] of Object.entries(OLD_TIP_KEYS)) {
+    if (typeof old[tool] === 'number') shownAt[key] = Math.max(old[tool] as number, shownAt[key] ?? 0)
+  }
+  const dismissedAt = ((await attempt(() => $.store.get('nudgesDismissed'), undefined)) ?? {}) as NudgeState['dismissedAt']
+  const connected = (await attempt(() => read($, bpTools), [] as string[])).flatMap((t): BpTool[] => {
+    const key = t.split(':')[0]
+    return key === 'web' || key === 'social' || key === 'pad' ? [key] : []
+  })
+  return {
+    ...base,
+    plugin: $.plugin.name,
+    shownAt,
+    dismissedAt,
+    up: await nudgeUp($),
+    connected,
+    usedTools: [...usedTools],
+    outOfRuns: isOutOfRuns(await attempt(() => read($, plan), null)),
+    plan: planExtras,
+    planRead,
   }
 }
 
-/** Counts a tool call and raises a tip when one is due. Never blocks the call. */
+/** One event in, at most one nudge out. Records when it showed and draws it; the expert nudge's row is drawn by its caller. */
+async function nudgeEvent($: Dollar, event: NudgeEvent): Promise<Nudge | null> {
+  const s = await settings($)
+  if (!s.expertOn || !(await attempt(() => read($, isEnabled), true))) return null
+  const now = await $.clock.now()
+  const out = decide(event, await nudgeState($), now)
+  session = out.state
+  if (!out.nudge) return null
+  const key = out.nudge.key
+  await attempt(() => $.store.set('nudgesShown', out.state.shownAt), undefined)
+  if (key === 'tip_web') await update($, toolTip, () => ({ key: 'web', at: now }))
+  else if (key === 'tip_social') await update($, toolTip, () => ({ key: 'social', at: now }))
+  else if (key !== 'expert_decision') await update($, nudge, () => out.nudge)
+  reportNudge($, 'shown', key)
+  return out.nudge
+}
+
+/** A business decision was flagged (the review or the one-message check): the expert nudge, unless another is up or it was put away today. */
+async function raiseExpert($: Dollar, ex: Omit<ExpertFlag, 'at'>): Promise<void> {
+  const raised = await nudgeEvent($, { type: 'decision', question: ex.question, topic: ex.topic })
+  if (!raised) return
+  const now = await $.clock.now()
+  await update($, expert, () => ({ ...ex, at: now }))
+}
+
+/** Counts a tool call for the nudges. Never blocks the call. */
 async function noteToolUse($: Dollar, tool: string, input: unknown): Promise<void> {
   const ours = BP_TOOLS.find(b => isBpToolName(tool, b.tool))
   if (ours) {
-    usedTools.add(ours.key)
+    usedTools.add(ours.key as UsedTool)
     return
   }
-  const i = (input ?? {}) as { url?: unknown }
-  let due: ToolTip['key'] | null = null
-  if (tool === 'WebFetch' && SOCIAL_HOST.test(hostOf(i.url))) due = 'social'
-  else if (tool === 'WebFetch' || tool === 'WebSearch') due = ++webCalls >= TIP_WEB_CALLS ? 'web' : null
-  else if (tool === 'ExitPlanMode') due = 'pad'
-  if (due) await offerTip($, due)
+  await nudgeEvent($, { type: 'tool.call', tool, input })
 }
 
-async function offerTip($: Dollar, key: ToolTip['key']): Promise<void> {
-  if (usedTools.has(key)) return
-  const s = await settings($)
-  if (!s.expertOn || !(await attempt(() => read($, isEnabled), true))) return
-  if (!(await attempt(() => read($, bpTools), [] as string[])).some(t => t.startsWith(`${key}:`))) return
-  if (isOutOfRuns(await attempt(() => read($, plan), null))) return
-  if ((await attempt(() => read($, toolTip), null)) || (await attempt(() => read($, expert), null))) return
-  const now = await $.clock.now()
-  const shown = ((await attempt(() => $.store.get('toolTipsShown'), undefined)) ?? {}) as Record<string, number>
-  if (typeof shown[key] === 'number' && now - shown[key] < TIP_EVERY_MS) return
-  await attempt(() => $.store.set('toolTipsShown', { ...shown, [key]: now }), undefined)
-  await update($, toolTip, () => ({ key, at: now }))
+/** The nudge's own row: Not now puts it away; its cooldown runs on from when it showed. */
+async function skipNudge($: Dollar): Promise<void> {
+  const n = await attempt(() => read($, nudge), null)
+  await update($, nudge, () => null)
+  if (n) reportNudge($, 'dismissed', n.key)
 }
 
-/** Not now: drops the tip (it comes back for this tool in a week at the soonest), and ends the dev preview of it. */
+/** The nudge's button: fills the prompt with its command (ahead of anything the member typed). Never sends. */
+async function useNudge($: Dollar): Promise<void> {
+  const n = await attempt(() => read($, nudge), null)
+  if (!n) return
+  await update($, nudge, () => null)
+  if (session) session = accept(session, n.key)
+  reportNudge($, 'clicked', n.key)
+  await creditTool($, () => handOver($, n.command, 'prepend'))
+}
+
+/** Not now on a tool tip: drops it (it comes back for this tool in a week at the soonest), and ends the dev preview of it. */
 async function skipTip($: Dollar): Promise<void> {
+  const tip = await attempt(() => read($, toolTip), null)
   await update($, toolTip, () => null)
+  if (tip) reportNudge($, 'dismissed', `tip_${tip.key}` as NudgeKey)
 }
 
 /** Try it: puts the tool's prompt at the front of the draft, as its button under Additional tools does. */
 async function useTip($: Dollar, prompt: string): Promise<void> {
-  await skipTip($)
+  const tip = await attempt(() => read($, toolTip), null)
+  await update($, toolTip, () => null)
+  if (tip) reportNudge($, 'clicked', `tip_${tip.key}` as NudgeKey)
   await creditTool($, () => handOver($, prompt, 'prepend'))
 }
 
@@ -1029,13 +1114,21 @@ async function refreshHealth($: Dollar): Promise<void> {
 }
 
 /** The member's plan, so the bar can show what is included and when to upgrade. Fails soft: no plan, no change. */
+// last_audit_at and site_host from the last plan answer (null from an older server): the nudges' inputs.
+let planExtras = readPlanExtras(null)
+// False when the last plan read failed (no sign-in, no network, a bad answer): the audit date is then unknown, not missing.
+let planRead = true
+
 async function refreshPlan($: Dollar): Promise<void> {
   const a = await auth($)
+  planRead = false
   if (!a.token) return
   const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/plan?seen=row`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
   if (!r?.ok) return
   const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown; trial?: unknown; upgrade_url?: unknown }, null)
   if (!j || typeof j.plan !== 'string') return
+  planExtras = readPlanExtras(j)
+  planRead = true
   const now = await $.clock.now()
   await update($, plan, () => ({
     name: j.plan as string,
@@ -1062,6 +1155,47 @@ function cleanUpgradeUrl(raw: unknown, apiBase: string): string | null {
   // The bare domain and www are the same site: accept the link on either.
   const hosts = [apiBase, apiBase.replace('://www.', '://'), apiBase.replace('://buildpartner.ai', '://www.buildpartner.ai')]
   return hosts.some(h => url.startsWith(`${h}/trial/`)) && !/\s/.test(url) ? url : null
+}
+
+// ---- Starter's daily limits ----
+//
+// A Starter member's tool is refused once a daily limit is spent (lib/tier-limits.ts on the
+// server). The refusal's own words say which one, so the row shows with any CLI version.
+
+type StarterLimitKind = StarterLimit['kind']
+
+const LIMIT_NOUN: Record<StarterLimitKind, string> = { social: 'Social lookups', web: 'Web Research pages', pads: 'New BuildPads' }
+const LIMIT_OF: Record<string, StarterLimitKind> = { 'social lookups': 'social', 'Web Research pages': 'web', 'new BuildPads': 'pads' }
+
+/** Which Starter daily limit a tool's answer says is spent, or null. */
+export function starterLimitIn(result: unknown): StarterLimitKind | null {
+  try {
+    const m = /used today's \d+ (social lookups|Web Research pages|new BuildPads) on Starter/.exec(JSON.stringify(result))
+    return m?.[1] ? (LIMIT_OF[m[1]] ?? null) : null
+  } catch {
+    return null
+  }
+}
+
+/** The next midnight UTC after `now`, when every daily limit resets. */
+export function nextUtcMidnight(now: number): number {
+  const d = new Date(now)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+}
+
+/** "6h", or "40m" in the last hour. */
+export function resetsIn(ms: number): string {
+  return ms >= 3_600_000 ? `${Math.ceil(ms / 3_600_000)}h` : `${Math.max(1, Math.ceil(ms / 60_000))}m`
+}
+
+async function noteStarterLimit($: Dollar, kind: StarterLimitKind): Promise<void> {
+  const now = await $.clock.now()
+  await update($, starterLimit, () => ({ kind, until: nextUtcMidnight(now) }))
+}
+
+/** Upgrade to Pro: the Plans page, signed in. Checkout refuses an account that already has a plan. */
+async function upgradeToPro($: Dollar): Promise<void> {
+  await openDashboard($, '/dashboard/offers?from=mod')
 }
 
 /** A BuildPartner.ai tool answered that the free credits are used up: read the plan now, so the upgrade row shows at once. */
@@ -1197,12 +1331,16 @@ const seenReported = new Set<string>()
  */
 async function reportEvent(
   $: Dollar,
-  kind: 'notice_seen' | 'notice_clicked' | 'notice_dismissed' | 'bar_hidden' | 'bar_shown' | 'suggestion_shown' | 'suggestion_applied' | 'suggestion_dismissed',
+  kind: 'notice_seen' | 'notice_clicked' | 'notice_dismissed' | 'bar_hidden' | 'bar_shown' | 'suggestion_shown' | 'suggestion_applied' | 'suggestion_dismissed' | 'nudge',
   noticeId?: string,
   suggestionType?: string,
+  nudgeEvent?: { phase: string; key: string },
 ): Promise<void> {
   // Preview notices (dev builds) are drawings, not sends.
   if (noticeId?.startsWith('preview-')) return
+  // A nudge goes as { kind, nudge_key } and nothing else (nudgeEventBody).
+  const nudgeBody = nudgeEvent ? nudgeEventBody(nudgeEvent.phase, nudgeEvent.key) : null
+  if (nudgeEvent && !nudgeBody) return
   const a = await auth($)
   if (!a.token) return
   await attempt(
@@ -1210,7 +1348,7 @@ async function reportEvent(
       $.http.fetch(`${a.apiBase}/api/buildpartner/mod/events`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(noticeId ? { kind, notice_id: noticeId } : suggestionType ? { kind, suggestion_type: suggestionType } : { kind }),
+        body: JSON.stringify(nudgeBody ?? (noticeId ? { kind, notice_id: noticeId } : suggestionType ? { kind, suggestion_type: suggestionType } : { kind })),
       }),
     null,
   )
@@ -1417,16 +1555,17 @@ async function openUrl($: Dollar, url: string): Promise<boolean> {
   await attempt(() => update($, lastError, () => `${new Date(now).toISOString().slice(11, 19)} · browser did not open: ${tried.join('; ')}`), undefined)
   const base = await attempt(async () => (await auth($)).apiBase, null as string | null)
   reportError($, 'browser did not open', `${pageOf(url, base)} · ${tried.join(', ')}`)
-  if (await handOver($, openRequest(url), 'prepend')) $.ui.toast(`${NAME}: your browser didn't open from here. Press Enter and Claude opens the page.`)
+  if (await handOver($, openRequest($, url), 'prepend')) $.ui.toast(`${NAME}: your browser didn't open from here. Press Enter and Claude opens the page.`)
   return false
 }
 
 /** What the catch-all puts in the prompt: a dashboard page by its path (never the sign-in token), anything else by its link. */
-function openRequest(url: string): string {
+function openRequest($: Dollar, url: string): string {
   const m = /^https?:\/\/[^/]+(\/dashboard[^#]*)/.exec(url)
   if (!m) return `Open ${url} in my browser.`
   const page = (m[1] as string).replace(/([?&])t=[^&]*&?/, '$1').replace(/[?&]$/, '')
-  return page === '/dashboard' ? '/buildpartner:open-dashboard' : `/buildpartner:open-dashboard ${page}`
+  const command = `/${$.plugin.name}:open-dashboard`
+  return page === '/dashboard' ? command : `${command} ${page}`
 }
 
 // ---- AI Audit: how far a run is, above the bar ----
@@ -1461,6 +1600,7 @@ async function startAudit($: Dollar, text: string): Promise<void> {
   const m = AUDIT_PROMPT.exec(text)
   if (!m) return
   const now = await $.clock.now()
+  usedTools.add('audit')
   const isFresh = m[1] === 'Run' || m[1] === 'Re-run'
   await update($, audit, () => ({ startedAt: isFresh ? now : 0, at: now, stage: 0, found: 0, newest: '', isDone: false, isAway: false }))
   if (!isFresh) await readAudit($)
@@ -1722,7 +1862,7 @@ async function runScan($: Dollar): Promise<void> {
 /** Use, on Self-Improving (prompt): the full improve-system skill, run by Claude in the chat. More than the automatic check. */
 async function useSelf($: Dollar): Promise<void> {
   await update($, isExpanded, () => false)
-  await handOver($, '/buildpartner:improve-system ', 'prepend')
+  await handOver($, `/${$.plugin.name}:improve-system `, 'prepend')
 }
 
 /** Use, on Expert Advice (prompt): the expert-advice skill, with the flagged question when there is one. */
@@ -1871,6 +2011,7 @@ const TEST_STATES: readonly { key: string; label: string }[] = [
   { key: 'prompt-notice', label: 'Prompt notification' },
   { key: 'audit', label: 'AI Audit running' },
   { key: 'audit-done', label: 'AI Audit done' },
+  { key: 'starter-limit', label: 'Starter limit reached' },
   { key: 'everything', label: 'All at once' },
   { key: 'clear', label: 'Clear test states' },
 ]
@@ -1906,8 +2047,10 @@ async function setTestState($: Dollar, key: string): Promise<string> {
     await saveLedger($, map)
     await update($, expert, () => null)
     await update($, toolTip, () => null)
+    await update($, nudge, () => null)
     await update($, notices, list => list.filter(n => !n.id.startsWith('preview-')))
     await update($, audit, () => null)
+    await update($, starterLimit, () => null)
     await update($, rowAt, () => 0)
     return 'test states cleared.'
   }
@@ -1950,6 +2093,10 @@ async function setTestState($: Dollar, key: string): Promise<string> {
     const isDone = key === 'audit-done'
     await update($, audit, () => ({ startedAt: now, at: now, stage: isDone ? 6 : 3, found: isDone ? 7 : 4, newest: 'Friday client report built by hand', isDone, isAway: false }))
     done.push(isDone ? 'a finished AI Audit' : 'an AI Audit run')
+  }
+  if (key === 'starter-limit') {
+    await noteStarterLimit($, 'social')
+    done.push("Starter's social limit reached")
   }
   if (done.length === 0) return `test states are ${TEST_STATES.map(t => t.key).join(', ')}.`
   // The rows show above the bar: put the settings away and start at the first one.
@@ -2018,6 +2165,17 @@ function rowsAbove($: Dollar, v: View): Row[] {
       secondary: { key: 'skip-tip', label: 'Not now', kind: 'bar', onPress: () => skipTip($) },
     })
   }
+  // The other mod nudges (a page that would not load, a creator, a stale audit, a plan loop, competitor sites): one row, the command in the button.
+  if (v.nudge && v.enabled && v.expertOn && !out) {
+    rows.push({
+      key: 'mod-nudge',
+      icon: 'bulb',
+      header: NUDGE_HEADER[v.nudge.key] ?? 'BuildPartner.ai',
+      text: v.nudge.line,
+      primary: { key: 'use-nudge', label: v.nudge.button, kind: 'prompt', onPress: () => useNudge($) },
+      secondary: { key: 'skip-nudge', label: 'Not now', kind: 'bar', onPress: () => skipNudge($) },
+    })
+  }
   // Each suggestion is its own row: what kind and where, the change, why, Add rule and Don't add.
   for (const p of v.enabled ? v.list : []) {
     const kind = ROW_KIND[p.type] ?? { label: TYPE_LABEL[p.type] ?? p.type, action: 'Apply', decline: 'Dismiss' }
@@ -2069,6 +2227,18 @@ function rowsAbove($: Dollar, v: View): Row[] {
             secondary: { key: 'skip-upgrade', label: 'Not now', pressLabel: 'Not now (free runs used up)', kind: 'bar', onPress: () => skipUpgrade($) },
           },
     )
+  }
+  const spent = v.starterLimit
+  if (spent && v.now < spent.until) {
+    rows.push({
+      key: 'starter-limit-row',
+      icon: 'bulb',
+      header: "Today's limit reached",
+      text: `${LIMIT_NOUN[spent.kind]} used up today. Resets in ${resetsIn(spent.until - v.now)}. Upgrade to Pro to continue.`,
+      plain: `Today's limit reached. ${LIMIT_NOUN[spent.kind]} used up today. Upgrade to Pro to continue.`,
+      primary: { key: 'starter-pro-bar', label: 'Upgrade to Pro', kind: 'open', onPress: () => upgradeToPro($) },
+      secondary: { key: 'starter-limit-dismiss', label: 'Dismiss', pressLabel: "Dismiss (today's limit reached)", kind: 'bar', onPress: () => update($, starterLimit, () => null) },
+    })
   }
   for (const n of v.notices) {
     rows.push({
@@ -2219,8 +2389,12 @@ type View = {
   run: ReflectRun | null
   ex: ExpertFlag | null
   tip: ToolTip | null
+  /** A mod nudge other than the expert question and the tool tips (mod-nudges.ts). */
+  nudge: Nudge | null
   /** Not now on the upgrade row, this session. */
   upgradeSkipped: boolean
+  /** A Starter daily limit refused today, until it resets or is dismissed. */
+  starterLimit: StarterLimit | null
   /** The last press that failed ('' none). Debug. */
   lastError: string
   /** The two halves of the bar, each with its own switch. */
@@ -2299,10 +2473,7 @@ async function checkDecision($: Dollar, text: string): Promise<void> {
   )
   if (!reply?.isAnswered) return
   const ex = parseReply(reply.text).expert
-  if (ex) {
-    const now = await $.clock.now()
-    await update($, expert, () => ({ ...ex, at: now }))
-  }
+  if (ex) await raiseExpert($, ex)
 }
 
 async function looksLikeCorrection($: Dollar, text: string): Promise<boolean> {
@@ -2377,6 +2548,9 @@ export const register: Register = on => {
     // Dormant in a headless run until a surface attaches; a reload clears a review it cut off.
     active = e.isInteractive || e.surface !== null
     lastSurface = e.surface ?? ''
+    // A new session counts its web calls, plans and pasted sites from zero.
+    session = null
+    usedTools.clear()
     await attempt(async () => {
       const s = await settings($)
       await update($, isEnabled, () => s.enabled)
@@ -2444,7 +2618,10 @@ export const register: Register = on => {
     )
     $.clock.after(0, () =>
       void attempt(async () => {
-        if (await isOn($)) await refreshPlan($)
+        if (!(await isOn($))) return
+        await refreshPlan($)
+        // The plan says when the AI Audit last ran: the audit nudge's one trigger.
+        await nudgeEvent($, { type: 'session.start' })
       }, undefined),
     )
     // The team's notices: read at start, then every hour in a session that stays open.
@@ -2496,6 +2673,8 @@ export const register: Register = on => {
       if (m?.[1]) await attempt(() => remember($, m[1] as string), undefined)
       // An AI Audit prompt: its row shows above the bar from the start. The prompt goes to Claude untouched.
       await attempt(() => startAudit($, e.text), undefined)
+      // Social links, competitor sites: the nudges read the words in memory and keep none of them.
+      $.clock.after(0, () => void attempt(() => nudgeEvent($, { type: 'prompt.submit', text: e.text }), undefined))
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -2541,16 +2720,39 @@ export const register: Register = on => {
       if (!(await isOn($))) return next(e)
       // The tool's arguments sit beside `tool` on the event (e.url for WebFetch).
       const call = e as unknown as { tool: string } & Record<string, unknown>
-      $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call), undefined))
+      $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call.input ?? call), undefined))
       // One of our tools refused for credits: read the plan once it answers, so the upgrade row shows now.
       if (call.tool.startsWith(`mcp__plugin_${$.plugin.name}_tools__`) || (call.tool.startsWith(`mcp__plugin_${$.plugin.name}_hosted__`) && isOurHostedTool(call.tool))) {
         const done = await next(e)
         try {
           if (refusedForCredits(done)) $.clock.after(0, () => void attempt(() => upgradeOnRefusal($), undefined))
+          const spent = starterLimitIn(done)
+          if (spent) $.clock.after(0, () => void attempt(() => noteStarterLimit($, spent), undefined))
         } catch {
           // The call's result goes back whatever happens here.
         }
         return done
+      }
+      // A page that would not load, a plan sent back: the nudges read how the call came out. The result goes back untouched.
+      if (call.tool === 'WebFetch' || call.tool === 'ExitPlanMode') {
+        const input = call.input ?? call
+        let done: unknown
+        try {
+          done = await next(e)
+        } catch (err) {
+          try {
+            $.clock.after(0, () => void attempt(() => nudgeEvent($, { type: 'tool.result', tool: call.tool, input, result: { isError: true } }), undefined))
+          } catch {
+            // The call's own error goes back whatever happens here.
+          }
+          throw err
+        }
+        try {
+          $.clock.after(0, () => void attempt(() => nudgeEvent($, { type: 'tool.result', tool: call.tool, input, result: done }), undefined))
+        } catch {
+          // The call's result goes back whatever happens here.
+        }
+        return done as Awaited<ReturnType<typeof next>>
       }
       // An AI Audit run saves its findings after each stage: the row reads them once this call is done.
       const touched = auditCall(call)
@@ -2621,7 +2823,9 @@ export const register: Register = on => {
           run: await attempt(() => read($, last), null),
           ex: await attempt(() => read($, expert), null),
           tip: await attempt(() => read($, toolTip), null),
+          nudge: await attempt(() => read($, nudge), null),
           upgradeSkipped: await attempt(() => read($, upgradeSkipped), false),
+          starterLimit: await attempt(() => read($, starterLimit), null),
           lastError: await attempt(() => read($, lastError), ''),
           ...(await attempt(async () => {
             const st = await settings($)
@@ -2879,12 +3083,34 @@ function healthLines(v: View): { label: string; value: string; tone?: string }[]
   ]
 }
 
-/** The quiet health line at the bottom of the expanded bar. */
-function healthFooter(v: View): string {
+// The red words after the health line when this machine has no sign-in.
+const SIGNED_OUT = ' · Not signed in, run the BuildPartner.ai install again'
+
+/**
+ * The quiet health line at the bottom of the expanded mod, one line:
+ * "BuildPartner.ai v0.15.15 · updated 9h ago · Signed in as you@email.com · Pro".
+ * What BuildPartner.ai installed here, which version, and whose account, so a member (or the
+ * team) can tell at a glance. The plan is the one /api/buildpartner/plan names (planLabel), left
+ * out until it is read. When the line would not fit in `room` columns, "updated" goes first, then
+ * the email is cut short; the plan stays. Signed out, it stops before the red SIGNED_OUT words.
+ */
+function healthFooter(v: View, room = Number.POSITIVE_INFINITY): string {
   const h = v.health
   if (!h) return ''
-  // What BuildPartner.ai installed here, and which version, so a member (or the team) can tell at a glance.
-  return `BuildPartner.ai ${h.version ? `v${h.version} · ` : ''}updated ${when(v.now, h.pluginUpdatedAt)}`
+  const name = `BuildPartner.ai${h.version ? ` v${h.version}` : ''}`
+  const updated = `updated ${when(v.now, h.pluginUpdatedAt)}`
+  if (!h.isSignedIn) {
+    const full = `${name} · ${updated}`
+    return full.length + SIGNED_OUT.length <= room ? full : name
+  }
+  const who = h.account ? `Signed in as ${h.account}` : 'Signed in'
+  const tail = v.plan?.name ? ` · ${v.plan.name}` : ''
+  const full = `${name} · ${updated} · ${who}${tail}`
+  if (full.length <= room) return full
+  const short = `${name} · ${who}${tail}`
+  if (short.length <= room || !h.account) return short
+  // Too narrow even then: cut the email, keeping the plan ("Signed in as austin@exam… · Pro").
+  return `${name} · Signed in as ${cut(h.account, Math.max(6, room - `${name} · Signed in as ${tail}`.length))}${tail}`
 }
 
 // Dev builds only: states the team can switch the bar into to see how it looks.
@@ -3107,8 +3333,9 @@ function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
       {/* Health, kept quiet: one dim line. Only a problem gets color. ▲ at the right closes the panel from the bottom, the same as ▲ in the bar. */}
       <Box flexDirection="row" alignItems="center" columnGap={2}>
         <Text dimColor wrap="truncate">
-          {healthFooter(v)}
-          {v.health && !v.health.isSignedIn ? <Text color={BAD}> · Not signed in, run the BuildPartner.ai install again</Text> : ''}
+          {/* The room left after ▲ (1 column and the gap of 2) and the desktop's side padding (2). */}
+          {healthFooter(v, v.room - 5)}
+          {v.health && !v.health.isSignedIn ? <Text color={BAD}>{SIGNED_OUT}</Text> : ''}
         </Text>
         <Box flexGrow={1} flexShrink={0} justifyContent="flex-end" flexDirection="row">
           <Button key="collapse-bottom" plain onPress={click($, 'bar', 'Settings', collapse)}>

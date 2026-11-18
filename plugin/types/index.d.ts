@@ -6,6 +6,7 @@
 // 'buildpartner' to 'bp-dev' here and in the mod, since a mod can only write
 // state under its own plugin name.
 
+
 export type ReflectPatternType = 'skill_fix' | 'instruction' | 'new_skill' | 'wiki' | 'framework'
 
 export type ReflectPatternStatus = 'watching' | 'suggested' | 'dismissed' | 'applied'
@@ -76,7 +77,7 @@ export type BarHealth = {
   apiBase: string | null
   /** Whether ~/.buildpartner/auth.json holds a token. */
   isSignedIn: boolean
-  /** Who this machine is signed in as (auth.json email, else username). Dev debug only. */
+  /** Who this machine is signed in as (auth.json email, else username). Shown on the Settings footer and in Debug. Never the token. */
   account?: string | null
   /** When these were gathered (epoch ms). */
   at: number
@@ -141,6 +142,13 @@ export type TeamNotice = {
   prompt?: string
 }
 
+/** A Starter daily limit a BuildPartner.ai tool refused for, shown until it resets (midnight UTC) or is dismissed. */
+export type StarterLimit = {
+  kind: 'social' | 'web' | 'pads'
+  /** When it resets (epoch ms, the next midnight UTC). */
+  until: number
+}
+
 /** The first-run welcome card's words: the title and each paragraph under it. */
 export type WelcomeText = {
   title: string
@@ -164,6 +172,7 @@ declare module 'claude-code' {
       bpTools: Shaped<string[]>
       expert: Shaped<ExpertFlag | null>
       toolTip: Shaped<ToolTip | null>
+      nudge: Shaped<{ key: 'fetch_failed' | 'expert_decision' | 'social_talk' | 'audit_stale' | 'plan_loop' | 'competitor_urls' | 'tip_web' | 'tip_social' | 'tip_pad'; line: string; button: string; command: string } | null>
       health: Shaped<BarHealth | null>
       scanned: boolean
       scanDeclined: boolean
@@ -177,6 +186,7 @@ declare module 'claude-code' {
       welcomeText: Shaped<WelcomeText | null>
       rowAt: number
       upgradeSkipped: boolean
+      starterLimit: Shaped<StarterLimit | null>
       audit: Shaped<AuditRun | null>
       rolloutOn: boolean
     }
