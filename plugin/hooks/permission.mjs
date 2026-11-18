@@ -37,6 +37,9 @@ const QUIET_TOOLS = new Set([
   "run_plan",
 ]);
 
+/** The 5 tools both the local server and the hosted server (plugin mode) serve. */
+const SHARED_TOOLS = new Set(["get_expert_knowledge", "web_research", "social_intel", "get_founder_knowledge", "request_founder_knowledge"]);
+
 /** build_pad actions allowed without a prompt: read feedback or change the page. */
 const QUIET_PAD_ACTIONS = new Set(["poll", "ack", "reply", "update", "list", "unshare", "end"]);
 
@@ -45,9 +48,13 @@ export function decide(event) {
   const toolName = typeof event?.tool_name === "string" ? event.tool_name : "";
   // Only our plugin's server, by both names it ships under (prod and dev), so
   // another plugin that also calls its server "tools" never gets our allow.
-  const m = /^mcp__plugin_(buildpartner|bp-dev)_tools__([a-z_]+)$/.exec(toolName);
+  const m = /^mcp__plugin_(buildpartner|bp-dev)_(tools|hosted)__([a-z_]+)$/.exec(toolName);
   if (!m) return { allow: false, why: "not a BuildPartner tool" };
-  const tool = m[2];
+  const server = m[2];
+  const tool = m[3];
+  // The hosted server (/api/mcp in plugin mode) serves only the 5 shared tools,
+  // so a plugin-only name under it is never ours to allow.
+  if (server === "hosted") return SHARED_TOOLS.has(tool) ? { allow: true, why: `${tool} (hosted)` } : { allow: false, why: `${tool} (hosted, not shared)` };
   if (QUIET_TOOLS.has(tool)) return { allow: true, why: tool };
   if (tool === "build_pad") {
     const input = event.tool_input && typeof event.tool_input === "object" ? event.tool_input : {};

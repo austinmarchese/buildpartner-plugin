@@ -4,11 +4,12 @@ description: "Break down what's working for a creator, brand or competitor on In
 user-invocable: false
 allowed-tools:
   - mcp__plugin_buildpartner_tools__social_intel
+  - mcp__plugin_buildpartner_hosted__social_intel
 ---
 
 # Creator breakdown
 
-Use the `social_intel` tool. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_buildpartner_tools__social_intel`.
+Use the `social_intel` tool. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_buildpartner_tools__social_intel,mcp__plugin_buildpartner_hosted__social_intel`.
 
 1. No handle or link given? Ask for it. Don't guess handles.
 2. `profile` for size, then `creator_posts` for their newest posts (add `since` for "this week" or "this month"). Each post has an outlier score: how many times it beat the account's usual (median) performance. Lead with the outliers.

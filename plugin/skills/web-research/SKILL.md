@@ -4,6 +4,7 @@ description: "Search the web and read any website, link or URL with BuildPartner
 argument-hint: "<what to look up, or a link>"
 allowed-tools:
   - mcp__plugin_buildpartner_tools__web_research
+  - mcp__plugin_buildpartner_hosted__web_research
 ---
 
 # /buildpartner:web-research
@@ -18,7 +19,7 @@ If the request above is empty, work out what to look up from the conversation.
 
 ## Load the tool first
 
-The `web_research` tool is part of this plugin and is connected. Claude Code may list it by name only: if you can't call it yet, load it with ToolSearch, query `select:mcp__plugin_buildpartner_tools__web_research`, then call it. Never decide it is unavailable without calling it; its response says so if it isn't on for this account.
+The `web_research` tool is part of this plugin and is connected. Claude Code may list it by name only: if you can't call it yet, load it with ToolSearch, query `select:mcp__plugin_buildpartner_tools__web_research,mcp__plugin_buildpartner_hosted__web_research`, then call it. Never decide it is unavailable without calling it; its response says so if it isn't on for this account.
 
 ## Pick the action
 

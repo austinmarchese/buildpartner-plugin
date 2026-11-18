@@ -859,13 +859,23 @@ const BP_TOOLS: readonly { key: string; tool: string; label: string; hint: strin
   { key: 'web', tool: 'web_research', label: 'Web Research', hint: "Search the web and read any page, even ones Claude can't.", prompt: '/{p}:web-research ', more: '/dashboard/web' },
 ]
 
+/** `mcp__plugin_<p>_hosted__<tool>` for one of the 5 shared tools and one of our plugin names (buildpartner, bp-dev). */
+function isOurHostedTool(name: string): boolean {
+  return /^mcp__plugin_(?:buildpartner|bp-dev)_hosted__(?:get_expert_knowledge|web_research|social_intel|get_founder_knowledge|request_founder_knowledge)$/.test(name)
+}
+
+/** True for this plugin's local copy (`_tools__`) of a tool, or its hosted copy (`_hosted__`) when the hosted entry serves it. */
+function isBpToolName(name: string, tool: string): boolean {
+  return name.endsWith(`_tools__${tool}`) || (isOurHostedTool(name) && name.endsWith(`_hosted__${tool}`))
+}
+
 async function findBpTools($: Dollar): Promise<void> {
   const names = (await attempt(() => $.tool.list(), [])).map(t => t.name)
   const found: string[] = []
   for (const b of BP_TOOLS) {
-    // mcp__plugin_<plugin>_tools__<tool>: remember which plugin serves it.
-    const hit = names.find(n => n.endsWith(`_tools__${b.tool}`))
-    const plugin = hit ? /^mcp__plugin_(.+)_tools__/.exec(hit)?.[1] : undefined
+    // mcp__plugin_<plugin>_tools__<tool> or mcp__plugin_<plugin>_hosted__<tool>: remember which plugin serves it.
+    const hit = names.find(n => isBpToolName(n, b.tool))
+    const plugin = hit ? /^mcp__plugin_(.+)_(?:tools|hosted)__/.exec(hit)?.[1] : undefined
     if (plugin) found.push(`${b.key}:${plugin}`)
   }
   await update($, bpTools, () => found)
@@ -933,7 +943,7 @@ function hostOf(raw: unknown): string {
 
 /** Counts a tool call and raises a tip when one is due. Never blocks the call. */
 async function noteToolUse($: Dollar, tool: string, input: unknown): Promise<void> {
-  const ours = BP_TOOLS.find(b => tool.endsWith(`_tools__${b.tool}`))
+  const ours = BP_TOOLS.find(b => isBpToolName(tool, b.tool))
   if (ours) {
     usedTools.add(ours.key)
     return
@@ -1024,7 +1034,7 @@ async function refreshPlan($: Dollar): Promise<void> {
   if (!a.token) return
   const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/plan?seen=row`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
   if (!r?.ok) return
-  const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown; trial?: unknown }, null)
+  const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown; trial?: unknown; upgrade_url?: unknown }, null)
   if (!j || typeof j.plan !== 'string') return
   const now = await $.clock.now()
   await update($, plan, () => ({
@@ -1033,6 +1043,7 @@ async function refreshPlan($: Dollar): Promise<void> {
     creditsLeft: typeof j.credits_left === 'number' ? j.credits_left : null,
     hasCoach: j.has_coach === true,
     trial: cleanTrial(j.trial, a.apiBase),
+    upgradeUrl: cleanUpgradeUrl(j.upgrade_url, a.apiBase),
     at: now,
   }))
 }
@@ -1041,16 +1052,16 @@ async function refreshPlan($: Dollar): Promise<void> {
 function cleanTrial(raw: unknown, apiBase: string): { line: string; url: string } | null {
   const t = raw && typeof raw === 'object' ? (raw as { line?: unknown; url?: unknown }) : null
   const line = plainLine(t?.line, 200)
-  const url = typeof t?.url === 'string' ? t.url : ''
-  // The bare domain and www are the same site: accept the trial link on either.
-  const hosts = [apiBase, apiBase.replace('://www.', '://'), apiBase.replace('://buildpartner.ai', '://www.buildpartner.ai')]
-  return line && hosts.some(h => url.startsWith(`${h}/trial/`)) && !/\s/.test(url) ? { line, url } : null
+  const url = cleanUpgradeUrl(t?.url, apiBase)
+  return line && url ? { line, url } : null
 }
 
-/** Try 1 week free on the upgrade row: opens the link the row drew. No link (a preview), the plans page as before. */
-async function startTrial($: Dollar, url: string): Promise<void> {
-  if (!url) return upgrade($)
-  await openUrl($, url)
+/** A signed upgrade link from the plan, or null: a /trial/ page on this member's BuildPartner.ai. */
+function cleanUpgradeUrl(raw: unknown, apiBase: string): string | null {
+  const url = typeof raw === 'string' ? raw : ''
+  // The bare domain and www are the same site: accept the link on either.
+  const hosts = [apiBase, apiBase.replace('://www.', '://'), apiBase.replace('://buildpartner.ai', '://www.buildpartner.ai')]
+  return hosts.some(h => url.startsWith(`${h}/trial/`)) && !/\s/.test(url) ? url : null
 }
 
 /** A BuildPartner.ai tool answered that the free credits are used up: read the plan now, so the upgrade row shows at once. */
@@ -1327,8 +1338,24 @@ async function upgradeOnRefusal($: Dollar): Promise<void> {
   await refreshPlan($)
 }
 
+/**
+ * Upgrade (for free) on the row or under Additional tools: straight to checkout, never the
+ * plans page. The plan's signed link when there is one (the free week, or the paid plan once
+ * the week is used); otherwise checkout, signed in through the dashboard (?next=).
+ */
 async function upgrade($: Dollar): Promise<void> {
-  await openDashboard($, '/dashboard/offers?from=mod')
+  const pl = await attempt(() => read($, plan), null)
+  const url = pl?.trial?.url ?? pl?.upgradeUrl
+  if (url) {
+    await openUrl($, url)
+    return
+  }
+  await openDashboard($, `/dashboard?next=${encodeURIComponent('/checkout/starter?from=mod')}`)
+}
+
+/** The upgrade button's words: free while the member can still have the free week. */
+function upgradeLabel(pl: MemberPlan | null): string {
+  return pl?.trial ? 'Upgrade for free' : 'Upgrade'
 }
 
 // The trial offer's "shown" step, reported once per session when the row is drawn (not when the plan is read).
@@ -1344,7 +1371,7 @@ function reportUpgradeShown($: Dollar): void {
 
 /**
  * Runs a credit tool, with or without free runs left. Out of runs, the tool's own refusal
- * explains why in the chat and carries the offer (the free trial or the plans page), and the
+ * explains why in the chat and carries the offer (a link straight to checkout), and the
  * "Free runs used up" row follows it (upgradeOnRefusal). Opening the plans page straight from
  * Use read as a jump nobody asked for.
  */
@@ -2023,21 +2050,22 @@ function rowsAbove($: Dollar, v: View): Row[] {
     rows.push(
       trial
         ? {
-            // The 7-day free trial: one button straight to checkout, not the plans page.
+            // The 7-day free trial: one button straight to checkout, never the plans page.
             key: 'upgrade-row',
             icon: 'bulb',
             header: 'Free runs used up',
             text: trial.line,
             plain: `Free runs used up. ${trial.line}`,
-            primary: { key: 'trial-bar', label: 'Try 1 week free', kind: 'open', onPress: () => startTrial($, trial.url) },
+            primary: { key: 'trial-bar', label: 'Upgrade for free', kind: 'open', onPress: () => upgrade($) },
             secondary: { key: 'skip-upgrade', label: 'Not now', pressLabel: 'Not now (free runs used up)', kind: 'bar', onPress: () => skipUpgrade($) },
           }
         : {
             key: 'upgrade-row',
             icon: 'bulb',
             header: 'Free runs used up',
-            text: 'Upgrade to keep using Expert Advice and the tools.',
-            primary: { key: 'upgrade-bar', label: 'See plans', kind: 'open', onPress: () => upgrade($) },
+            text: 'Get Starter for $19.99/mo to keep using Expert Advice and the tools.',
+            // The free week is used: the paid checkout, never the plans page.
+            primary: { key: 'upgrade-bar', label: 'Upgrade', kind: 'open', onPress: () => upgrade($) },
             secondary: { key: 'skip-upgrade', label: 'Not now', pressLabel: 'Not now (free runs used up)', kind: 'bar', onPress: () => skipUpgrade($) },
           },
     )
@@ -2515,7 +2543,7 @@ export const register: Register = on => {
       const call = e as unknown as { tool: string } & Record<string, unknown>
       $.clock.after(0, () => void attempt(() => noteToolUse($, call.tool, call), undefined))
       // One of our tools refused for credits: read the plan once it answers, so the upgrade row shows now.
-      if (call.tool.startsWith(`mcp__plugin_${$.plugin.name}_tools__`)) {
+      if (call.tool.startsWith(`mcp__plugin_${$.plugin.name}_tools__`) || (call.tool.startsWith(`mcp__plugin_${$.plugin.name}_hosted__`) && isOurHostedTool(call.tool))) {
         const done = await next(e)
         try {
           if (refusedForCredits(done)) $.clock.after(0, () => void attempt(() => upgradeOnRefusal($), undefined))
@@ -2866,6 +2894,7 @@ const PREVIEWS: readonly { key: string; label: string }[] = [
   { key: 'free', label: 'Free, credits left' },
   { key: 'out', label: 'Free, out of runs' },
   { key: 'trial', label: 'Free, out of runs, trial offer' },
+  { key: 'starter', label: 'Starter' },
   { key: 'pro', label: 'Pro' },
   { key: 'exec', label: 'Executive (coach)' },
   { key: 'signedout', label: 'Not signed in' },
@@ -2883,10 +2912,12 @@ function withPreview(v: View, key: string): View {
     case 'out':
       return { ...v, plan: plan('Free', false, 0, false), list: [] }
     case 'trial':
-      // Drawing only: Try 1 week free on the preview opens the plans page, never a checkout.
-      return { ...v, plan: { ...plan('Free', false, 0, false), trial: { line: 'Try Pro free for 1 week, then $49.99/mo. Cancel anytime before Nov 23 and you pay nothing.', url: '' } }, list: [] }
+      // Drawing only: Upgrade for free on the preview opens this member's own upgrade link or checkout, never the plans page.
+      return { ...v, plan: { ...plan('Free', false, 0, false), trial: { line: 'Try Starter free for 1 week, then $19.99/mo. Cancel anytime before Nov 23 and you pay nothing.', url: '' } }, list: [] }
     case 'pro':
       return { ...v, plan: plan('Pro', true, null, false) }
+    case 'starter':
+      return { ...v, plan: plan('Starter', true, null, false) }
     case 'exec':
       return { ...v, plan: plan('Executive', true, null, true) }
     case 'signedout':
@@ -3023,7 +3054,7 @@ function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
           }),
           out ? (
             <Box key="tool-upgrade" flexDirection="row">
-              <Button key="upgrade-tools" label="Upgrade" variant="primary" onPress={click($, 'open', 'Upgrade', () => upgrade($))} />
+              <Button key="upgrade-tools" label={upgradeLabel(v.plan)} variant="primary" onPress={click($, 'open', upgradeLabel(v.plan), () => upgrade($))} />
             </Box>
           ) : (
             ''

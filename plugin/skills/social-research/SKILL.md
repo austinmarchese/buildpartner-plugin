@@ -4,6 +4,7 @@ description: "Research what's on X (Twitter), Instagram, YouTube, TikTok, Linked
 argument-hint: "<a creator, @handle, link or topic>"
 allowed-tools:
   - mcp__plugin_buildpartner_tools__social_intel
+  - mcp__plugin_buildpartner_hosted__social_intel
 ---
 
 # /buildpartner:social-research
@@ -18,7 +19,7 @@ If the request above is empty, work out what to look up from the conversation.
 
 ## Load the tool first
 
-The `social_intel` tool is part of this plugin and is connected. Claude Code may list it by name only: if you can't call it yet, load it with ToolSearch, query `select:mcp__plugin_buildpartner_tools__social_intel`, then call it. Never decide it is unavailable without calling it; its response says so if it isn't on for this account.
+The `social_intel` tool is part of this plugin and is connected. Claude Code may list it by name only: if you can't call it yet, load it with ToolSearch, query `select:mcp__plugin_buildpartner_tools__social_intel,mcp__plugin_buildpartner_hosted__social_intel`, then call it. Never decide it is unavailable without calling it; its response says so if it isn't on for this account.
 
 ## Pick the action
 

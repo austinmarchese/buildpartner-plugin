@@ -5,9 +5,21 @@
       "args": [
         "--npx",
         "-y",
-        "buildpartner@0.15.14",
+        "buildpartner@0.15.15",
         "serve"
-      ]
+      ],
+      "env": {
+        "BP_HOSTED_URL": "https://www.buildpartner.ai/api/mcp"
+      }
+    },
+    "hosted": {
+      "type": "http",
+      "url": "https://www.buildpartner.ai/api/mcp",
+      "headersHelper": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/bp-auth-header\"",
+      "timeout": 300000,
+      "headers": {
+        "X-BuildPartner-Plugin": "1"
+      }
     }
   }
 }

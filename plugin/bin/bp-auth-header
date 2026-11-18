@@ -1,0 +1,12 @@
+#!/bin/sh
+# bp-auth-header: the headersHelper for the plugin's `hosted` MCP entry.
+#
+# Claude Code runs this before it connects to /api/mcp and reads one JSON
+# object of headers from stdout. The work is in bp-auth-header.mjs; this
+# wrapper only finds a Node the same way every other plugin script does
+# (bin/bp-node), because Node may not be on PATH when Claude Code starts.
+# Plain POSIX sh, so it also runs under Git Bash on Windows.
+#
+# Prints nothing else, anywhere. No network.
+here="$(dirname "$0")"
+exec sh "$here/bp-node" "$here/bp-auth-header.mjs"
