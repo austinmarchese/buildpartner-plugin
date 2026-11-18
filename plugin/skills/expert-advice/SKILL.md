@@ -25,8 +25,8 @@ These are the available expert categories. Pick the best match for the user's qu
 
 If any MCP tool call is blocked with an upgrade/limit message, STOP immediately. Do not try to answer the question yourself, do not search the codebase, do not use any fallback. Instead:
 
-1. Tell the user the `message` from the blocked tool result as written (it explains exactly what ran out). Put any link in it (a free trial link or the plans page) on its own line so they can click it.
-2. Ask if they want it opened. If they say yes, run `open "<that link>"`. If the message has no link, offer `https://www.buildpartner.ai/dashboard/offers` instead.
+1. Tell the user the `message` from the blocked tool result as written (it explains exactly what ran out). Put the upgrade link in it on its own line so they can click it.
+2. Ask if they want it opened. If they say yes, run `open "<that link>"`. If the message has no link, offer `https://www.buildpartner.ai/checkout/starter` instead.
 3. Never read `~/.buildpartner/auth.json` and never put a token in a link.
 
 Nothing else. No apologies, no alternatives, no partial answers.

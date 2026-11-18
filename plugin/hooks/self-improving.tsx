@@ -1024,7 +1024,7 @@ async function refreshPlan($: Dollar): Promise<void> {
   if (!a.token) return
   const r = await attempt(() => $.http.fetch(`${a.apiBase}/api/buildpartner/plan?seen=row`, { headers: { Authorization: `Bearer ${a.token}` } }), null)
   if (!r?.ok) return
-  const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown; trial?: unknown }, null)
+  const j = await attempt(async () => JSON.parse(r.text) as { plan?: unknown; paid?: unknown; credits_left?: unknown; has_coach?: unknown; trial?: unknown; upgrade_url?: unknown }, null)
   if (!j || typeof j.plan !== 'string') return
   const now = await $.clock.now()
   await update($, plan, () => ({
@@ -1033,6 +1033,7 @@ async function refreshPlan($: Dollar): Promise<void> {
     creditsLeft: typeof j.credits_left === 'number' ? j.credits_left : null,
     hasCoach: j.has_coach === true,
     trial: cleanTrial(j.trial, a.apiBase),
+    upgradeUrl: cleanUpgradeUrl(j.upgrade_url, a.apiBase),
     at: now,
   }))
 }
@@ -1041,16 +1042,16 @@ async function refreshPlan($: Dollar): Promise<void> {
 function cleanTrial(raw: unknown, apiBase: string): { line: string; url: string } | null {
   const t = raw && typeof raw === 'object' ? (raw as { line?: unknown; url?: unknown }) : null
   const line = plainLine(t?.line, 200)
-  const url = typeof t?.url === 'string' ? t.url : ''
-  // The bare domain and www are the same site: accept the trial link on either.
-  const hosts = [apiBase, apiBase.replace('://www.', '://'), apiBase.replace('://buildpartner.ai', '://www.buildpartner.ai')]
-  return line && hosts.some(h => url.startsWith(`${h}/trial/`)) && !/\s/.test(url) ? { line, url } : null
+  const url = cleanUpgradeUrl(t?.url, apiBase)
+  return line && url ? { line, url } : null
 }
 
-/** Try 1 week free on the upgrade row: opens the link the row drew. No link (a preview), the plans page as before. */
-async function startTrial($: Dollar, url: string): Promise<void> {
-  if (!url) return upgrade($)
-  await openUrl($, url)
+/** A signed upgrade link from the plan, or null: a /trial/ page on this member's BuildPartner.ai. */
+function cleanUpgradeUrl(raw: unknown, apiBase: string): string | null {
+  const url = typeof raw === 'string' ? raw : ''
+  // The bare domain and www are the same site: accept the link on either.
+  const hosts = [apiBase, apiBase.replace('://www.', '://'), apiBase.replace('://buildpartner.ai', '://www.buildpartner.ai')]
+  return hosts.some(h => url.startsWith(`${h}/trial/`)) && !/\s/.test(url) ? url : null
 }
 
 /** A BuildPartner.ai tool answered that the free credits are used up: read the plan now, so the upgrade row shows at once. */
@@ -1327,8 +1328,24 @@ async function upgradeOnRefusal($: Dollar): Promise<void> {
   await refreshPlan($)
 }
 
+/**
+ * Upgrade (for free) on the row or under Additional tools: straight to checkout, never the
+ * plans page. The plan's signed link when there is one (the free week, or the paid plan once
+ * the week is used); otherwise checkout, signed in through the dashboard (?next=).
+ */
 async function upgrade($: Dollar): Promise<void> {
-  await openDashboard($, '/dashboard/offers?from=mod')
+  const pl = await attempt(() => read($, plan), null)
+  const url = pl?.trial?.url ?? pl?.upgradeUrl
+  if (url) {
+    await openUrl($, url)
+    return
+  }
+  await openDashboard($, `/dashboard?next=${encodeURIComponent('/checkout/starter?from=mod')}`)
+}
+
+/** The upgrade button's words: free while the member can still have the free week. */
+function upgradeLabel(pl: MemberPlan | null): string {
+  return pl?.trial ? 'Upgrade for free' : 'Upgrade'
 }
 
 // The trial offer's "shown" step, reported once per session when the row is drawn (not when the plan is read).
@@ -1344,7 +1361,7 @@ function reportUpgradeShown($: Dollar): void {
 
 /**
  * Runs a credit tool, with or without free runs left. Out of runs, the tool's own refusal
- * explains why in the chat and carries the offer (the free trial or the plans page), and the
+ * explains why in the chat and carries the offer (a link straight to checkout), and the
  * "Free runs used up" row follows it (upgradeOnRefusal). Opening the plans page straight from
  * Use read as a jump nobody asked for.
  */
@@ -2023,13 +2040,13 @@ function rowsAbove($: Dollar, v: View): Row[] {
     rows.push(
       trial
         ? {
-            // The 7-day free trial: one button straight to checkout, not the plans page.
+            // The 7-day free trial: one button straight to checkout, never the plans page.
             key: 'upgrade-row',
             icon: 'bulb',
             header: 'Free runs used up',
             text: trial.line,
             plain: `Free runs used up. ${trial.line}`,
-            primary: { key: 'trial-bar', label: 'Try 1 week free', kind: 'open', onPress: () => startTrial($, trial.url) },
+            primary: { key: 'trial-bar', label: 'Upgrade for free', kind: 'open', onPress: () => upgrade($) },
             secondary: { key: 'skip-upgrade', label: 'Not now', pressLabel: 'Not now (free runs used up)', kind: 'bar', onPress: () => skipUpgrade($) },
           }
         : {
@@ -2037,7 +2054,8 @@ function rowsAbove($: Dollar, v: View): Row[] {
             icon: 'bulb',
             header: 'Free runs used up',
             text: 'Get Starter for $19.99/mo to keep using Expert Advice and the tools.',
-            primary: { key: 'upgrade-bar', label: 'See plans', kind: 'open', onPress: () => upgrade($) },
+            // The free week is used: the paid checkout, never the plans page.
+            primary: { key: 'upgrade-bar', label: 'Upgrade', kind: 'open', onPress: () => upgrade($) },
             secondary: { key: 'skip-upgrade', label: 'Not now', pressLabel: 'Not now (free runs used up)', kind: 'bar', onPress: () => skipUpgrade($) },
           },
     )
@@ -2884,7 +2902,7 @@ function withPreview(v: View, key: string): View {
     case 'out':
       return { ...v, plan: plan('Free', false, 0, false), list: [] }
     case 'trial':
-      // Drawing only: Try 1 week free on the preview opens the plans page, never a checkout.
+      // Drawing only: Upgrade for free on the preview opens this member's own upgrade link or checkout, never the plans page.
       return { ...v, plan: { ...plan('Free', false, 0, false), trial: { line: 'Try Starter free for 1 week, then $19.99/mo. Cancel anytime before Nov 23 and you pay nothing.', url: '' } }, list: [] }
     case 'pro':
       return { ...v, plan: plan('Pro', true, null, false) }
@@ -3026,7 +3044,7 @@ function details($: Dollar, D: Elements, v: View, collapse: () => unknown) {
           }),
           out ? (
             <Box key="tool-upgrade" flexDirection="row">
-              <Button key="upgrade-tools" label="Upgrade" variant="primary" onPress={click($, 'open', 'Upgrade', () => upgrade($))} />
+              <Button key="upgrade-tools" label={upgradeLabel(v.plan)} variant="primary" onPress={click($, 'open', upgradeLabel(v.plan), () => upgrade($))} />
             </Box>
           ) : (
             ''

@@ -97,6 +97,11 @@ export type MemberPlan = {
    * no token in it). Null or absent otherwise.
    */
   trial?: { line: string; url: string } | null
+  /**
+   * Out of free credits with no free week left: the signed link to the paid checkout
+   * (same /trial/ link, 24 hours, no token in it). Null or absent otherwise.
+   */
+  upgradeUrl?: string | null
   /** When it was read (epoch ms). */
   at: number
 }

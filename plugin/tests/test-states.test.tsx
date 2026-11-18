@@ -187,8 +187,8 @@ test('out of free runs, the expert question waits: only the upgrade row asks, an
   await clock.advance(1)
   await state($, 'expert')
   const ui = await $.ui.mount(BAND('desktop'))
-  // One row, not "1 of 2": the upgrade row alone, with See plans.
-  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
+  // One row, not "1 of 2": the upgrade row alone, with Upgrade (no free week offered).
+  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('Upgrade')
   expect(await ui.find({ type: 'Button', key: 'ask-expert-nudge' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'row-next' })).toBeUndefined()
   // Not now on the upgrade row does not bring back an expert row that would lead to the same page.
@@ -199,7 +199,7 @@ test('out of free runs, the expert question waits: only the upgrade row asks, an
 
 const TRIAL = { line: 'Try Pro free for 1 week, then $49.99/mo. Cancel anytime before Nov 23 and you pay nothing.', url: 'https://example.test/trial/abc.def?from=mod' }
 
-test('out of free runs with a trial offer: the row offers it, and Try 1 week free opens its checkout link', async ($, on) => {
+test('out of free runs with a trial offer: the row offers it, and Upgrade for free opens its checkout link', async ($, on) => {
   mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   const clock = mock.clock(on)
@@ -219,7 +219,7 @@ test('out of free runs with a trial offer: the row offers it, and Try 1 week fre
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
   await clock.advance(1)
   const ui = await $.ui.mount(BAND('desktop'))
-  expect((await ui.find({ type: 'Button', key: 'trial-bar' }))?.text).toBe('Try 1 week free')
+  expect((await ui.find({ type: 'Button', key: 'trial-bar' }))?.text).toBe('Upgrade for free')
   expect(await ui.find({ type: 'Button', key: 'upgrade-bar' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Cancel anytime before Nov 23/ })).toBeDefined()
   await ui.press({ key: 'trial-bar' })
@@ -228,7 +228,33 @@ test('out of free runs with a trial offer: the row offers it, and Try 1 week fre
   await ui.unmount()
 })
 
-test('a trial link that is not on this member\'s BuildPartner.ai is ignored: the row stays See plans', async ($, on) => {
+test('free week used: the row says Upgrade and opens the paid checkout link, never the plans page', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  const ran: string[][] = []
+  on('process.run', (_, e) => (ran.push([...e.argv]), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : e.url.endsWith('/api/buildpartner/plan?seen=row')
+        ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ plan: 'Free', paid: false, credits_left: 0, has_coach: false, trial: null, upgrade_url: 'https://example.test/trial/abc.def?from=mod&plan=starter' }) } }
+        : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('Upgrade')
+  await ui.press({ key: 'upgrade-bar' })
+  expect(ran[0]).toEqual(['open', 'https://example.test/trial/abc.def?from=mod&plan=starter'])
+  await ui.unmount()
+})
+
+test('a trial link that is not on this member\'s BuildPartner.ai is ignored: the row stays Upgrade', async ($, on) => {
   mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   const clock = mock.clock(on)
@@ -246,7 +272,7 @@ test('a trial link that is not on this member\'s BuildPartner.ai is ignored: the
   await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
   await clock.advance(1)
   const ui = await $.ui.mount(BAND('desktop'))
-  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
+  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('Upgrade')
   expect(await ui.find({ type: 'Button', key: 'trial-bar' })).toBeUndefined()
   await ui.unmount()
 })
@@ -276,7 +302,7 @@ test('a BuildPartner.ai tool refused for credits mid-session: the plan is read a
   left = 0
   await $.tool.call({ tool: 'mcp__plugin_bp-dev_tools__web_research', action: 'scrape', url: 'https://acme.test' } as never)
   await clock.advance(1)
-  expect((await ui.find({ type: 'Button', key: 'trial-bar' }))?.text).toBe('Try 1 week free')
+  expect((await ui.find({ type: 'Button', key: 'trial-bar' }))?.text).toBe('Upgrade for free')
   await ui.unmount()
 })
 
@@ -385,7 +411,7 @@ test('out of free runs, Use on a tool fills the prompt like any other time: no p
 
 const RUN_FAILS = { value: { exitCode: 1, stdout: '', stderr: 'no browser', isStdoutTruncated: false, isStderrTruncated: false } }
 
-test('See plans with no browser to open: the prompt fills with the open-dashboard command for the plans page, no token', async ($, on) => {
+test('Upgrade with no link and no browser to open: the prompt fills with the open-dashboard command for checkout, no token', async ($, on) => {
   mock.store(on, { welcomed: true, scanned: true })
   mock.env(on, { HOME: '/home/m' })
   const clock = mock.clock(on)
@@ -419,8 +445,8 @@ test('See plans with no browser to open: the prompt fills with the open-dashboar
   await ui.press({ key: 'upgrade-bar' })
   // Every opener was tried with the signed-in plans page, then the catch-all.
   expect(ran.map(a => a[0])).toEqual(['open', 'xdg-open', 'rundll32'])
-  expect(ran[0]?.[1]).toBe('https://example.test/dashboard/offers?from=mod&t=t')
-  expect(filled).toEqual(["/bp-dev:open-dashboard /dashboard/offers?from=mod"])
+  expect(ran[0]?.[1]).toBe('https://example.test/dashboard?next=%2Fcheckout%2Fstarter%3Ffrom%3Dmod&t=t')
+  expect(filled).toEqual(["/bp-dev:open-dashboard /dashboard?next=%2Fcheckout%2Fstarter%3Ffrom%3Dmod"])
   expect(toasts.some(t => /Press Enter and Claude opens the page/.test(t))).toBe(true)
   // The team hears about it in Slack: which page and how each opener failed, nothing personal.
   await clock.advance(1)
@@ -428,10 +454,10 @@ test('See plans with no browser to open: the prompt fills with the open-dashboar
   const sent = JSON.parse(reports[0] as string) as { action: string; detail: string }
   expect(sent.action).toBe('browser did not open')
   // Directional only: the page by its path and how each opener failed, never what an opener printed.
-  expect(sent.detail).toBe('/dashboard/offers · open exit 1, xdg-open exit 1, rundll32 exit 1')
+  expect(sent.detail).toBe('/dashboard · open exit 1, xdg-open exit 1, rundll32 exit 1')
   expect(reports[0]).not.toContain('t=t')
-  // The upgrade row stays, so See plans can be pressed again.
-  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('See plans')
+  // The upgrade row stays, so Upgrade can be pressed again.
+  expect((await ui.find({ type: 'Button', key: 'upgrade-bar' }))?.text).toBe('Upgrade')
   await ui.unmount()
 })
 
