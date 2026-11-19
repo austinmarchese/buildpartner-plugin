@@ -25,8 +25,8 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import { accept, decide, dismiss as dismissNudgeState, newState, nudgeEventBody, readPlanExtras } from './mod-nudges'
-import type { BpTool, Nudge, NudgeEvent, NudgeKey, NudgeState, UsedTool } from './mod-nudges'
+import { accept, decide, dismiss as dismissNudgeState, gateNote, gateStep, mayShow, newState, nudgeEventBody, readGate, readPlanExtras } from './mod-nudges'
+import type { BpTool, GateEvent, ModGate, Nudge, NudgeEvent, NudgeKey, NudgeState, UsedTool } from './mod-nudges'
 import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun, AuditRun, StarterLimit, WelcomeText } from '../types'
 
 type Dollar = EngineInterface
@@ -553,6 +553,9 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
     const promoted: ReflectPattern[] = []
     const lines: string[] = []
     let seen = 0
+    // The gate as of now (this also reports an ended quiet once). Each promotion below is counted on a local copy, then saved after the ledger.
+    const gateAt = await tickGate($)
+    let gate = gateAt.gate
     // Self-Improving off: automatic reviews never run (afterTurn), so only a review the member asked for gets here; it files no suggestions.
     for (const item of selfOn ? parsed.items : []) {
       const target = item.target.replace(/^\.\//, '').trim()
@@ -592,9 +595,11 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
             ? entry.sessions.length >= BAR.mediumSessions || entry.corrections >= BAR.mediumCorrections
             : false
       const waiting = Object.values(map).filter(x => x.status === 'suggested').length + promoted.length
-      if (entry.status === 'watching' && earns && waiting < MAX_WAITING) {
+      // The mod's own gate: none while it is quiet, and at most MOD_SUGGESTIONS_PER_DAY a day. A held one stays watching and is reconsidered next time.
+      if (entry.status === 'watching' && earns && waiting < MAX_WAITING && mayShow(gate, 'suggestion', gateAt.now, gateAt.day)) {
         entry.status = 'suggested'
         promoted.push(entry)
+        gate = gateStep(gate, { type: 'shown', kind: 'suggestion' }, gateAt.now, gateAt.day).gate
       }
       map[id] = entry
       lines.push(
@@ -603,6 +608,7 @@ async function review($: Dollar, why: Why, past?: { sessionId: string; msgs: Msg
     }
 
     await saveLedger($, map)
+    for (const _p of promoted) await stepGate($, { type: 'shown', kind: 'suggestion' })
     if (!past) await update($, cursor, () => ({ sessionId, upTo: all.length }))
     await update($, last, () => ({ at: now, seen, promoted: promoted.length, tokens }))
 
@@ -636,6 +642,10 @@ async function setStatus($: Dollar, id: string, status: ReflectPattern['status']
   if (!p) return undefined
   map[id] = { ...p, status }
   await saveLedger($, map)
+  // Apply is an accept and Don't add is a dismissal (a demo is neither); "Not now" in the walk-through never gets here.
+  if (!id.startsWith('demo-') && p.status !== status && (status === 'applied' || status === 'dismissed')) {
+    await stepGate($, { type: status === 'applied' ? 'accepted' : 'dismissed', kind: 'suggestion' })
+  }
   return map[id]
 }
 
@@ -714,7 +724,8 @@ async function showSuggestions($: Dollar): Promise<void> {
   const list = await attempt(() => read($, pending), [] as ReflectPattern[])
   // Nothing waiting: say so at once, without starting a Claude reply.
   if (list.length === 0) {
-    $.ui.toast(`${NAME}: nothing waiting. New suggestions show up in the mod.`)
+    const held = await heldNote($)
+    $.ui.toast(held ? `${NAME}: nothing waiting. ${held}` : `${NAME}: nothing waiting. New suggestions show up in the mod.`)
     return
   }
   // The command has Claude read this file. Arguments show raw in the member's message, so they
@@ -852,7 +863,10 @@ async function readPast($: Dollar): Promise<string> {
   const ready = (await attempt(() => read($, pending), [] as ReflectPattern[])).length
   const sessions = `Read ${read_} past session${read_ === 1 ? '' : 's'}`
   // Nothing found is a result too: say so, and where the next suggestion will show.
-  if (ready === 0) return `${sessions}. Nothing to fix. New suggestions show in the mod as you work.`
+  if (ready === 0) {
+    const held = await heldNote($)
+    return held ? `${sessions}. ${held}` : `${sessions}. Nothing to fix. New suggestions show in the mod as you work.`
+  }
   return `${sessions}: ${ready} suggestion${ready === 1 ? '' : 's'} ready.`
 }
 
@@ -911,6 +925,7 @@ async function skipExpert($: Dollar): Promise<void> {
   await update($, expert, () => null)
   if (!flagged) return
   reportNudge($, 'dismissed', 'expert_decision')
+  await stepGate($, { type: 'dismissed', kind: 'nudge' })
   const now = await $.clock.now()
   const dismissedAt = dismissNudgeState(await nudgeState($), 'expert_decision', now).dismissedAt
   await attempt(() => $.store.set('nudgesDismissed', dismissedAt), undefined)
@@ -931,6 +946,7 @@ async function askExpert($: Dollar): Promise<void> {
     if (ex) {
       await update($, expert, () => null)
       reportNudge($, 'clicked', 'expert_decision')
+      await stepGate($, { type: 'accepted', kind: 'nudge' })
     }
   }
 }
@@ -1003,11 +1019,12 @@ async function nudgeState($: Dollar): Promise<NudgeState> {
 async function nudgeEvent($: Dollar, event: NudgeEvent): Promise<Nudge | null> {
   const s = await settings($)
   if (!s.expertOn || !(await attempt(() => read($, isEnabled), true))) return null
-  const now = await $.clock.now()
-  const out = decide(event, await nudgeState($), now)
+  const { gate, now, day } = await tickGate($)
+  const out = decide(event, await nudgeState($), now, gate, day)
   session = out.state
   if (!out.nudge) return null
   const key = out.nudge.key
+  await stepGate($, { type: 'shown', kind: 'nudge' })
   await attempt(() => $.store.set('nudgesShown', out.state.shownAt), undefined)
   if (key === 'tip_web') await update($, toolTip, () => ({ key: 'web', at: now }))
   else if (key === 'tip_social') await update($, toolTip, () => ({ key: 'social', at: now }))
@@ -1038,7 +1055,10 @@ async function noteToolUse($: Dollar, tool: string, input: unknown): Promise<voi
 async function skipNudge($: Dollar): Promise<void> {
   const n = await attempt(() => read($, nudge), null)
   await update($, nudge, () => null)
-  if (n) reportNudge($, 'dismissed', n.key)
+  if (n) {
+    reportNudge($, 'dismissed', n.key)
+    await stepGate($, { type: 'dismissed', kind: 'nudge' })
+  }
 }
 
 /** The nudge's button: fills the prompt with its command (ahead of anything the member typed). Never sends. */
@@ -1048,6 +1068,7 @@ async function useNudge($: Dollar): Promise<void> {
   await update($, nudge, () => null)
   if (session) session = accept(session, n.key)
   reportNudge($, 'clicked', n.key)
+  await stepGate($, { type: 'accepted', kind: 'nudge' })
   await creditTool($, () => handOver($, n.command, 'prepend'))
 }
 
@@ -1055,14 +1076,20 @@ async function useNudge($: Dollar): Promise<void> {
 async function skipTip($: Dollar): Promise<void> {
   const tip = await attempt(() => read($, toolTip), null)
   await update($, toolTip, () => null)
-  if (tip) reportNudge($, 'dismissed', `tip_${tip.key}` as NudgeKey)
+  if (tip) {
+    reportNudge($, 'dismissed', `tip_${tip.key}` as NudgeKey)
+    await stepGate($, { type: 'dismissed', kind: 'nudge' })
+  }
 }
 
 /** Try it: puts the tool's prompt at the front of the draft, as its button under Additional tools does. */
 async function useTip($: Dollar, prompt: string): Promise<void> {
   const tip = await attempt(() => read($, toolTip), null)
   await update($, toolTip, () => null)
-  if (tip) reportNudge($, 'clicked', `tip_${tip.key}` as NudgeKey)
+  if (tip) {
+    reportNudge($, 'clicked', `tip_${tip.key}` as NudgeKey)
+    await stepGate($, { type: 'accepted', kind: 'nudge' })
+  }
   await creditTool($, () => handOver($, prompt, 'prepend'))
 }
 
@@ -1320,6 +1347,60 @@ function reportDecisions($: Dollar, before: Record<string, ReflectPattern>, afte
   }
 }
 
+// ---- The gate: auto-quiet and the daily caps (mod-nudges.ts holds the rules) ----
+//
+// One gate for every mod prompt, kept in $.store under modGate so every window on this machine shares it. Each step reads it
+// fresh, steps it with gateStep and writes it back, then reports a quiet that started or ended (kind only, fail soft).
+
+/** The member's local calendar day (YYYY-MM-DD) from the machine clock, not the UTC date. */
+function localDay(ms: number): string {
+  const d = new Date(ms)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`
+}
+
+/** The stored gate, or a fresh active one when it is missing or damaged (the mod never stays silent over its own storage). */
+async function loadGate($: Dollar, day: string): Promise<ModGate> {
+  return readGate(await attempt(() => $.store.get('modGate'), undefined), day)
+}
+
+/** Steps the stored gate with one event (a tick when none) and reports what started or ended. Returns the gate as stored. */
+async function stepGate($: Dollar, ev: GateEvent): Promise<{ gate: ModGate; now: number; day: string }> {
+  const now = await $.clock.now()
+  const day = localDay(now)
+  const before = await loadGate($, day)
+  const out = gateStep(before, ev, now, day)
+  let wrote = true
+  if (ev.type !== 'tick' || out.report.length > 0 || JSON.stringify(out.gate) !== JSON.stringify(before)) {
+    wrote = await attempt(async () => { await $.store.set('modGate', out.gate); return true }, false)
+  }
+  // Report a start or an end only once it is stored: a store that keeps failing would otherwise send the same
+  // mod_quiet_ended on every event and use up the member's event budget on the server.
+  if (wrote) for (const kind of out.report) $.clock.after(0, () => void attempt(() => reportEvent($, kind), undefined))
+  return { gate: out.gate, now, day }
+}
+
+/** The gate after a tick: quiet that ran out ends here, once, whichever window gets here first. */
+function tickGate($: Dollar): Promise<{ gate: ModGate; now: number; day: string }> {
+  return stepGate($, { type: 'tick' })
+}
+
+/** True while the mod is quiet, for drawing: reads the gate, writes nothing. */
+/** gateNote for now, or null; never throws. */
+async function heldNote($: Dollar): Promise<string | null> {
+  return attempt(async () => {
+    const now = await $.clock.now()
+    const day = localDay(now)
+    return gateNote(await loadGate($, day), now, day)
+  }, null)
+}
+
+async function isQuiet($: Dollar): Promise<boolean> {
+  const now = await attempt(() => $.clock.now(), 0)
+  const day = localDay(now)
+  return gateStep(await loadGate($, day), { type: 'tick' }, now, day).gate.mode === 'quiet'
+}
+
 // Notices reported as seen by this process; the server keeps one row per member per notice anyway.
 const seenReported = new Set<string>()
 
@@ -1331,7 +1412,7 @@ const seenReported = new Set<string>()
  */
 async function reportEvent(
   $: Dollar,
-  kind: 'notice_seen' | 'notice_clicked' | 'notice_dismissed' | 'bar_hidden' | 'bar_shown' | 'suggestion_shown' | 'suggestion_applied' | 'suggestion_dismissed' | 'nudge',
+  kind: 'notice_seen' | 'notice_clicked' | 'notice_dismissed' | 'bar_hidden' | 'bar_shown' | 'suggestion_shown' | 'suggestion_applied' | 'suggestion_dismissed' | 'nudge' | 'mod_quiet_started' | 'mod_quiet_ended',
   noticeId?: string,
   suggestionType?: string,
   nudgeEvent?: { phase: string; key: string },
@@ -2177,7 +2258,7 @@ function rowsAbove($: Dollar, v: View): Row[] {
     })
   }
   // Each suggestion is its own row: what kind and where, the change, why, Add rule and Don't add.
-  for (const p of v.enabled ? v.list : []) {
+  for (const p of v.enabled && !v.quiet ? v.list : []) {
     const kind = ROW_KIND[p.type] ?? { label: TYPE_LABEL[p.type] ?? p.type, action: 'Apply', decline: 'Dismiss' }
     rows.push({
       key: `sugg-${p.id}`,
@@ -2381,6 +2462,8 @@ function topCardPlain($: Dollar, D: Elements, v: View): JSX.Element | '' {
 
 type View = {
   enabled: boolean
+  /** The mod is quiet (5 dismissals in a row): waiting suggestion cards are not drawn. */
+  quiet: boolean
   busy: boolean
   open: boolean
   working: boolean
@@ -2815,6 +2898,7 @@ export const register: Register = on => {
         await attempt(() => read($, tick), 0)
         const v: View = {
           enabled: await attempt(() => read($, isEnabled), true),
+          quiet: await isQuiet($), // reads the modGate
           busy: since > 0 && now - since < BUSY_STALE_MS,
           open: await attempt(() => read($, isExpanded), false),
           working: e.props.isWorking,
@@ -2913,10 +2997,12 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
     if (verb === 'off') {
       stop?.abort()
       await saveSettings($, { enabled: false })
+      $.clock.after(0, () => void attempt(() => reportEvent($, 'bar_hidden'), undefined))
       return { text: `${NAME}: Self-improving is off. /${$.plugin.name}:plugin on to turn it back on.` }
     }
     if (verb === 'on') {
       await saveSettings($, { enabled: true })
+      $.clock.after(0, () => void attempt(() => reportEvent($, 'bar_shown'), undefined))
       return { text: `${NAME}: Self-improving is on.` }
     }
     if (verb === 'hide' || verb === 'show') {

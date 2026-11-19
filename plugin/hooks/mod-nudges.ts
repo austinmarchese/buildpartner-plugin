@@ -284,10 +284,15 @@ function triggers(event: NudgeEvent, state: NudgeState, now: number): { next: Nu
   }
 }
 
-/** The one transition: an event in, the nudge to show (or null) and the next state out. A dropped trigger spends no cooldown. */
-export function decide(event: NudgeEvent, state: NudgeState, now: number): { nudge: Nudge | null; state: NudgeState } {
+/**
+ * The one transition: an event in, the nudge to show (or null) and the next state out. A dropped trigger spends no cooldown.
+ * With a gate (and the member's local day), a nudge is also dropped when the gate says no. decide never steps the gate: the
+ * caller does, with { type: 'shown', kind: 'nudge' }, once the nudge is drawn.
+ */
+export function decide(event: NudgeEvent, state: NudgeState, now: number, gate?: ModGate, day?: string): { nudge: Nudge | null; state: NudgeState } {
   const { next, wants } = triggers(event, state, now)
-  const pick = wants.find(w => isEligible(next, w.key, now))
+  const gated = gate !== undefined && day !== undefined && !mayShow(gate, 'nudge', now, day)
+  const pick = gated ? undefined : wants.find(w => isEligible(next, w.key, now))
   if (!pick) return { nudge: null, state: next }
   return {
     nudge: build(next, pick.key, pick.extra),
@@ -323,4 +328,122 @@ export function nudgeEventBody(phase: string, key: string | undefined): { kind: 
   const kind = (PHASE_KIND as Record<string, string | undefined>)[phase]
   if (!kind || typeof key !== 'string' || !(NUDGE_KEYS as readonly string[]).includes(key)) return null
   return { kind, nudge_key: key }
+}
+
+// ---- The gate: auto-quiet and the daily caps over every mod prompt ----
+//
+// One state, one transition function. A gate sits over every prompt the mod makes (a suggestion, a nudge, a check-in).
+// After MOD_QUIET_STREAK dismissals in a row it goes quiet for MOD_QUIET_COOLDOWN_MS. Awake, it lets through at most
+// MOD_SUGGESTIONS_PER_DAY suggestions a day and MOD_OTHER_PROMPTS_PER_DAY nudge or check-in a day (those two share the one).
+// Pure: the caller passes the clock and the member's local day (YYYY-MM-DD), keeps the gate in storage, and re-reads it
+// before every step so two windows share one gate. Only kinds are ever reported, never text.
+
+export const MOD_QUIET_STREAK = 5
+export const MOD_QUIET_COOLDOWN_MS = 7 * DAY_MS
+export const MOD_SUGGESTIONS_PER_DAY = 3
+export const MOD_OTHER_PROMPTS_PER_DAY = 1
+
+/**
+ * Mirror of the server's MOD_DISMISS_KINDS and MOD_ACCEPT_KINDS (the web app's notices library). The plugin cannot import the web app, so the
+ * literals are repeated here and a test holds the two copies equal. A dismissal adds to the streak; an accept resets it.
+ */
+export const MOD_DISMISS_ANSWERS = ['suggestion_dismissed', 'nudge_dismissed', 'mod.checkin:dismissed']
+export const MOD_ACCEPT_ANSWERS = ['suggestion_applied', 'nudge_clicked', 'mod.checkin:answered']
+
+export type PromptKind = 'suggestion' | 'nudge' | 'checkin'
+export type ModGate = {
+  mode: 'active' | 'quiet'
+  /** Dismissals in a row with no accept between. */
+  streak: number
+  /** When quiet ends (ms); null while active. */
+  quietUntil: number | null
+  /** The member's local calendar day the two counts belong to. */
+  day: string
+  suggestionsShown: number
+  /** Nudges and check-ins shown that day, together. */
+  otherShown: number
+}
+export type GateEvent = { type: 'shown' | 'accepted' | 'dismissed'; kind: PromptKind } | { type: 'tick' }
+export type GateReport = 'mod_quiet_started' | 'mod_quiet_ended'
+
+export function newGate(day: string): ModGate {
+  return { mode: 'active', streak: 0, quietUntil: null, day, suggestionsShown: 0, otherShown: 0 }
+}
+
+/** A gate read back from storage: anything that is not a well-formed gate is a fresh active one, so a bad value never silences the mod. */
+export function readGate(raw: unknown, day: string): ModGate {
+  const g = raw && typeof raw === 'object' ? (raw as Partial<Record<keyof ModGate, unknown>>) : {}
+  const count = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  const quiet = g.mode === 'quiet' && typeof g.quietUntil === 'number' && Number.isFinite(g.quietUntil)
+  const ok = (g.mode === 'active' || quiet) && count(g.streak) && count(g.suggestionsShown) && count(g.otherShown) && typeof g.day === 'string'
+  if (!ok) return newGate(day)
+  return {
+    mode: quiet ? 'quiet' : 'active',
+    streak: g.streak as number,
+    quietUntil: quiet ? (g.quietUntil as number) : null,
+    day: g.day as string,
+    suggestionsShown: g.suggestionsShown as number,
+    otherShown: g.otherShown as number,
+  }
+}
+
+/** The gate as of now and day: quiet that has run out is active again, and a new day has zero counts. Reports nothing. */
+function asOf(gate: ModGate, now: number, day: string): { gate: ModGate; ended: boolean } {
+  let g = gate
+  let ended = false
+  if (g.mode === 'quiet' && g.quietUntil !== null && now >= g.quietUntil) {
+    g = { ...g, mode: 'active', streak: 0, quietUntil: null }
+    ended = true
+  }
+  if (g.day !== day) g = { ...g, day, suggestionsShown: 0, otherShown: 0 }
+  return { gate: g, ended }
+}
+
+/** The one transition for the gate: an event in, the next gate and what to report out. Never mutates the gate it is given. */
+export function gateStep(gate: ModGate, ev: GateEvent, now: number, day: string): { gate: ModGate; report: GateReport[] } {
+  const base = asOf(gate, now, day)
+  let g = base.gate
+  const report: GateReport[] = base.ended ? ['mod_quiet_ended'] : []
+  switch (ev.type) {
+    case 'tick':
+      break
+    case 'shown':
+      g = ev.kind === 'suggestion' ? { ...g, suggestionsShown: g.suggestionsShown + 1 } : { ...g, otherShown: g.otherShown + 1 }
+      break
+    case 'accepted':
+      if (g.mode === 'quiet') report.push('mod_quiet_ended')
+      g = { ...g, mode: 'active', streak: 0, quietUntil: null }
+      break
+    case 'dismissed':
+      if (g.mode === 'quiet') break // the cooldown is not extended
+      if (g.streak + 1 >= MOD_QUIET_STREAK) {
+        g = { ...g, mode: 'quiet', streak: 0, quietUntil: now + MOD_QUIET_COOLDOWN_MS }
+        report.push('mod_quiet_started')
+      } else {
+        g = { ...g, streak: g.streak + 1 }
+      }
+      break
+  }
+  return { gate: { ...g }, report }
+}
+
+/**
+ * The one line a member reads when they ask for suggestions and the gate is holding them back, or null when it is not.
+ * Quiet: until when, and why. At the day's suggestion cap: that more show tomorrow. Never prompt text.
+ */
+export function gateNote(gate: ModGate, now: number, day: string): string | null {
+  const g = asOf(gate, now, day).gate
+  if (g.mode === 'quiet' && typeof g.quietUntil === 'number') {
+    const until = new Date(g.quietUntil).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    return `The mod is paused until ${until} after you turned down ${MOD_QUIET_STREAK} prompts in a row.`
+  }
+  if (g.suggestionsShown >= MOD_SUGGESTIONS_PER_DAY) return `The mod shows up to ${MOD_SUGGESTIONS_PER_DAY} new suggestions a day, and has shown them all for today.`
+  return null
+}
+
+/** Quiet beats everything; then the suggestion cap for suggestions; then the shared one-a-day budget for nudges and check-ins. */
+export function mayShow(gate: ModGate, kind: PromptKind, now: number, day: string): boolean {
+  const g = asOf(gate, now, day).gate
+  if (g.mode === 'quiet') return false
+  return kind === 'suggestion' ? g.suggestionsShown < MOD_SUGGESTIONS_PER_DAY : g.otherShown < MOD_OTHER_PROMPTS_PER_DAY
 }
