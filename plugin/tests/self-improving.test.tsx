@@ -42,6 +42,7 @@ async function applied($: Parameters<Parameters<typeof test>[1]>[0], on: On) {
   on('prompt.fill', (_, e) => (filled.push(e.text), { isFilled: true, text: e.text, cursor: e.text.length }))
   on('prompt.submit', (_, e) => (sent.push(e.context), { text: e.text }))
   on('prompt.compose', () => ({ sections: [] }))
+  on('session.compact', (_, e) => e as never)
   on('tool.register', () => ({ value: { tool: 'x' } }))
   on('fs.list', () => ({ value: [] }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
