@@ -32,7 +32,7 @@ const LESSONS = `Lessons the member approved in this session. Follow them now:\n
 type On = Parameters<typeof mock.store>[0]
 
 /** A member who presses Apply on one suggestion; `sent` lists the context of every prompt that reached the bottom. */
-async function applied($: Parameters<Parameters<typeof test>[1]>[0], on: On) {
+async function applied($: Parameters<Parameters<typeof test>[1]>[0], on: On, opts?: { shouldRejectSubmit?: () => boolean }) {
   mock.store(on, { welcomed: true, scanned: true, patterns: { [PATTERN.id]: PATTERN } })
   mock.env(on, { HOME: '/home/m' })
   const clock = mock.clock(on)
@@ -40,7 +40,11 @@ async function applied($: Parameters<Parameters<typeof test>[1]>[0], on: On) {
   const filled: string[] = []
   on('prompt.read', () => ({ value: { text: '' } }) as never)
   on('prompt.fill', (_, e) => (filled.push(e.text), { isFilled: true, text: e.text, cursor: e.text.length }))
-  on('prompt.submit', (_, e) => (sent.push(e.context), { text: e.text }))
+  on('prompt.submit', (_, e) => {
+    if (opts?.shouldRejectSubmit?.()) throw new Error('downstream failed')
+    sent.push(e.context)
+    return { text: e.text }
+  })
   on('prompt.compose', () => ({ sections: [] }))
   on('session.compact', (_, e) => e as never)
   on('tool.register', () => ({ value: { tool: 'x' } }))
@@ -77,9 +81,23 @@ test('approved lessons ride on the first prompt after a compaction', async ($, o
   expect(sent).toEqual([[LESSONS], [LESSONS], undefined])
 })
 
+test('approved lessons retry on the next prompt if downstream prompt.submit rejects', async ($, on) => {
+  let rejectSubmit = true
+  const { sent, applyPrompt } = await applied($, on, { shouldRejectSubmit: () => rejectSubmit })
+  await expect($.prompt.submit({ text: applyPrompt } as never)).rejects.toThrow()
+  rejectSubmit = false
+  await $.prompt.submit({ text: 'Retry now.' } as never)
+  await $.prompt.submit({ text: 'And again.' } as never)
+  expect(sent).toEqual([[LESSONS], undefined])
+})
+
 test('approved lessons ride on no prompt where the system prompt route ran', async ($, on) => {
   const { sent, applyPrompt } = await applied($, on)
-  await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] })
+  const composeArgs = { model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] }
+  await $.prompt.compose(composeArgs)
   await $.prompt.submit({ text: applyPrompt } as never)
-  expect(sent).toEqual([undefined])
+  const composed = await $.prompt.compose(composeArgs)
+  expect(composed.sections).toContainEqual({ id: `${PLUGIN}:approved-lessons`, text: LESSONS, scope: 'session' })
+  await $.prompt.submit({ text: 'Carry on.' } as never)
+  expect(sent).toEqual([undefined, undefined])
 })

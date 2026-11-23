@@ -2773,8 +2773,9 @@ export const register: Register = on => {
       const list = await attempt(() => read($, appliedNow), [] as string[])
       const text = lessonsText(list)
       if (list.length > 0 && text !== attachedLessons) {
+        const done = await next({ ...e, context: [...(e.context ?? []), text] })
         attachedLessons = text
-        return next({ ...e, context: [...(e.context ?? []), text] })
+        return done
       }
     }
     return next(e)
