@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="buildpad-template" content="curated-feed">
+<meta name="buildpad-annotation" content="off">
+<meta name="buildpad-chat" content="collapsed">
+<title>{{NAME}}'s Curated Feed</title>
+<!-- Template: Curated Feed. Colors and fonts come from the BuildPad brand stylesheet every pad
+     gets (--bp-* tokens, .bp-* classes). The page draws itself from the JSON in #feed-data:
+     fill that block and the five {{...}} below (the two prompts go inside the <template> tags), and change nothing else. -->
+<style>
+  body { margin: 0; }
+  .col { max-width: 600px; margin: 0 auto; min-height: 100vh; border-inline: 1px solid var(--bp-rule); background: var(--bp-surface); }
+  @media (max-width: 640px) { .col { border-inline: 0; } }
+  .head { padding: 22px 16px 16px; border-bottom: 1px solid var(--bp-rule); }
+  .kicker { font: 700 11px/1 var(--bp-font-body); letter-spacing: .12em; text-transform: uppercase; color: var(--bp-accent); margin: 0 0 8px; }
+  h1 { font: 650 clamp(24px, 4vw, 30px)/1.1 var(--bp-font-display); margin: 0; color: var(--bp-body); }
+  .lead { margin: 10px 0 0; font-size: 15px; line-height: 1.5; color: var(--bp-muted); }
+  .updated { margin: 8px 0 0; font-size: 13px; color: var(--bp-faint); }
+  .tabs { position: sticky; top: 0; z-index: 2; display: flex; overflow-x: auto; border-bottom: 1px solid var(--bp-rule); background: color-mix(in srgb, var(--bp-surface) 90%, transparent); backdrop-filter: blur(8px); }
+  .tabs button { flex: 1; min-width: fit-content; position: relative; padding: 14px 12px; border: 0; background: none; font: 600 14px var(--bp-font-body); color: var(--bp-faint); cursor: pointer; white-space: nowrap; }
+  .tabs button:hover { color: var(--bp-muted); background: var(--bp-card); }
+  .tabs button[aria-pressed="true"] { color: var(--bp-body); }
+  .tabs button[aria-pressed="true"]::after { content: ""; position: absolute; left: 50%; bottom: 0; width: 48px; height: 4px; margin-left: -24px; border-radius: 99px; background: var(--bp-accent); }
+  .tabs button:focus-visible { outline: 2px solid var(--bp-accent); outline-offset: -2px; }
+  a.post { display: block; padding: 12px 16px; border-bottom: 1px solid var(--bp-rule); color: inherit; text-decoration: none; }
+  a.post:hover { background: var(--bp-card); }
+  a.post:focus-visible { outline: 2px solid var(--bp-accent); outline-offset: -2px; }
+  .row { display: flex; gap: 12px; }
+  .grow { min-width: 0; flex: 1; }
+  .who { display: flex; align-items: center; gap: 4px; font-size: 15px; line-height: 20px; }
+  .who b { color: var(--bp-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; max-width: 60%; }
+  .who span { color: var(--bp-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .who .t { flex-shrink: 0; }
+  .who .glyph { margin-left: auto; padding-left: 8px; flex-shrink: 0; display: inline-flex; }
+  .glyph svg { width: 16px; height: 16px; color: var(--bp-faint); }
+  .av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--bp-card-solid); }
+  .av.i { display: grid; place-items: center; background: var(--bp-accent-tint); color: var(--bp-accent); font-weight: 700; font-size: 14px; }
+  .text { margin: 2px 0 0; font-size: 15px; line-height: 20px; color: var(--bp-body); white-space: pre-line; overflow-wrap: anywhere; }
+  .media { margin-top: 12px; border: 1px solid var(--bp-rule); border-radius: 16px; overflow: hidden; display: grid; gap: 2px; max-height: 510px; background: var(--bp-card-solid); }
+  .media.n2, .media.n3, .media.n4 { grid-template-columns: 1fr 1fr; aspect-ratio: 16 / 9; }
+  .media.n3 > :first-child { grid-row: span 2; }
+  .media.n4 { grid-template-rows: 1fr 1fr; }
+  .tile { position: relative; overflow: hidden; min-height: 0; }
+  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .play { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+  .play span { width: 52px; height: 52px; border-radius: 50%; background: rgba(29, 24, 21, .7); display: grid; place-items: center; }
+  .play svg { width: 22px; height: 22px; margin-left: 3px; fill: #fbf6ef; }
+  .card { margin-top: 12px; border: 1px solid var(--bp-rule); border-radius: 16px; overflow: hidden; }
+  .card img { width: 100%; aspect-ratio: 1.91 / 1; object-fit: cover; display: block; }
+  .card p { margin: 0; padding: 8px 12px; font-size: 13px; color: var(--bp-faint); }
+  .card p b { display: block; color: var(--bp-body); font-weight: 500; font-size: 14px; }
+  .quote { margin-top: 12px; border: 1px solid var(--bp-rule); border-radius: 16px; padding: 12px; }
+  .quote .who { font-size: 14px; }
+  .quote .text { font-size: 14px; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+  .stats { margin-top: 12px; display: flex; justify-content: space-between; max-width: 420px; font-size: 13px; color: var(--bp-faint); }
+  .stats span { display: inline-flex; align-items: center; gap: 6px; }
+  .stats svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .standout { display: inline-block; margin-top: 8px; padding: 2px 8px; border-radius: 99px; background: var(--bp-accent-tint); color: var(--bp-accent); font-size: 11px; font-weight: 600; }
+  .thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: var(--bp-card-solid); }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .len { position: absolute; right: 8px; bottom: 8px; padding: 2px 6px; border-radius: 6px; background: rgba(29, 24, 21, .85); color: #fbf6ef; font-size: 12px; font-weight: 600; }
+  .yt { margin-top: 12px; display: flex; gap: 12px; }
+  .yt .av { width: 36px; height: 36px; }
+  .yt .title { margin: 0; font-size: 15px; font-weight: 600; line-height: 20px; color: var(--bp-body); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .yt .meta { margin: 4px 0 0; font-size: 13px; color: var(--bp-faint); }
+  .ig-head { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .ig-head .av { width: 32px; height: 32px; }
+  .ig-head b { color: var(--bp-body); }
+  .ig-head span { color: var(--bp-faint); }
+  .ig-head .glyph { margin-left: auto; }
+  .ig-img { position: relative; margin-top: 12px; aspect-ratio: 4 / 5; border-radius: 8px; overflow: hidden; background: var(--bp-card-solid); }
+  .ig-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ig-count { margin: 10px 0 0; font-size: 14px; font-weight: 600; color: var(--bp-body); }
+  .ig-cap { margin: 4px 0 0; font-size: 14px; line-height: 20px; color: var(--bp-body); white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .meta { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+  .meta .updated { margin: 0; }
+  .acts { display: flex; gap: 8px; }
+  .act { display: inline-flex; align-items: center; gap: 6px; border-radius: 99px; padding: 7px 14px; min-height: 34px; font: 600 13px var(--bp-font-body); cursor: pointer; border: 1px solid var(--bp-rule); background: var(--bp-card); color: var(--bp-body); transition: background .15s, border-color .15s; }
+  .act:hover { border-color: var(--bp-accent-line, var(--bp-accent)); }
+  .act.primary { background: var(--bp-accent); border-color: var(--bp-accent); color: var(--bp-on-accent); }
+  .act.primary:hover { background: var(--bp-accent-hover); }
+  .act svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .act:focus-visible, .copied summary:focus-visible { outline: 2px solid var(--bp-accent); outline-offset: 2px; }
+  .copied { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--bp-accent-tint); font-size: 13px; color: var(--bp-body); }
+  .copied summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+  .copied summary::-webkit-details-marker { display: none; }
+  .copied summary .more { margin-left: auto; color: var(--bp-muted); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+  .copied[open] summary .more::after { content: ""; }
+  .copied .check { color: var(--bp-accent); font-weight: 700; }
+  .prompt { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; background: #1d1815; color: #fbf6ef; font: 12.5px/1.5 var(--bp-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+  .empty, .end { padding: 48px 16px; text-align: center; color: var(--bp-faint); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="col">
+  <header class="head">
+    <p class="kicker">Curated Feed</p>
+    <h1>{{NAME}}'s Curated Feed</h1>
+    <p class="lead">{{LEAD}}</p>
+    <div class="meta">
+      <p class="updated">Updates daily · Last updated {{UPDATED}}</p>
+      <div class="acts">
+        <button type="button" class="act primary" data-copy="update"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>Update feed</button>
+        <button type="button" class="act" data-copy="change"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M19 8v6M22 11h-6"/></svg>Edit creators</button>
+      </div>
+    </div>
+    <!-- After a click: the prompt was copied; it can be opened to read or copy by hand. -->
+    <details class="copied" id="copied" hidden>
+      <summary><span class="check">Copied.</span><span id="copied-text">Paste it into Claude Code.</span><span class="more">Show prompt</span></summary>
+      <pre class="prompt" id="copied-prompt"></pre>
+    </details>
+    <!-- The prompts the buttons copy. Never shown on their own. -->
+    <template id="prompt-update">{{UPDATE_PROMPT}}</template>
+    <template id="prompt-change">{{CHANGE_PROMPT}}</template>
+  </header>
+  <nav class="tabs" id="tabs" aria-label="Filter posts">
+    <button type="button" data-f="all" aria-pressed="true">All</button>
+    <button type="button" data-f="x">X</button>
+    <button type="button" data-f="youtube">YouTube</button>
+    <button type="button" data-f="instagram">Instagram</button>
+  </nav>
+  <main id="feed"></main>
+</div>
+
+<!-- The posts, newest first. One object per post; leave a field out when there is nothing for it.
+     Fields: platform ("x" | "youtube" | "instagram"), url, name, handle, avatar, postedAt (ISO),
+     text (an X post or Instagram caption; a YouTube video's title), views, likes, comments,
+     reposts (X: reposts + quotes), outlier (how many times the account's usual; shown at 2 or more),
+     media (X: up to 4 of { type: "photo" | "video" | "gif", url } where url is a still image),
+     card (X link preview: { url, title, domain, image }), quote (X quoted post: { name, handle, avatar, text, media }),
+     thumbnail and duration (YouTube; duration in seconds), image (Instagram), isVideo (Instagram reel). -->
+<script type="application/json" id="feed-data">
+[]
+</script>
+
+<script>
+(function () {
+  var posts = [];
+  try { posts = JSON.parse(document.getElementById("feed-data").textContent || "[]"); } catch (e) { posts = []; }
+  var feed = document.getElementById("feed");
+  var LABEL = { x: "X", youtube: "YouTube", instagram: "Instagram" };
+  var GLYPH = {
+    x: '<svg viewBox="0 0 24 24" fill="currentColor" aria-label="X"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',
+    youtube: '<svg viewBox="0 0 24 24" fill="currentColor" aria-label="YouTube"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.6 15.6V8.4l6.3 3.6-6.3 3.6z"/></svg>',
+    instagram: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-label="Instagram"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/></svg>'
+  };
+  var ICON = {
+    reply: "M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-4-.9L3 20l1.1-4A8 8 0 0 1 3 11.5 8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z",
+    repost: "M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3",
+    like: "M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z",
+    views: "M4 20V10M10 20V4M16 20v-7M22 20H2"
+  };
+  var PLAY = '<span class="play"><span><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span></span>';
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function safeUrl(u) { return /^https:\/\//.test(u || "") ? esc(u) : ""; }
+  function n(v) { v = Number(v) || 0; if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M"; if (v >= 1e3) return (v / 1e3).toFixed(v >= 1e4 ? 0 : 1).replace(/\.0$/, "") + "K"; return String(v); }
+  function ago(iso) { if (!iso) return ""; var m = Math.max(1, Math.round((Date.now() - Date.parse(iso)) / 6e4)); if (m < 60) return m + "m"; if (m < 1440) return Math.round(m / 60) + "h"; if (m < 10080) return Math.round(m / 1440) + "d"; return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
+  function agoLong(iso) { if (!iso) return ""; var h = (Date.now() - Date.parse(iso)) / 36e5; if (h < 24) { h = Math.max(1, Math.round(h)); return h + " hour" + (h === 1 ? "" : "s") + " ago"; } var d = Math.floor(h / 24); if (d < 7) return d + " day" + (d === 1 ? "" : "s") + " ago"; var w = Math.floor(d / 7); return w + " week" + (w === 1 ? "" : "s") + " ago"; }
+  function clock(s) { s = Math.round(s); var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); }
+  function icon(d) { return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>'; }
+  function img(src, cls) { var u = safeUrl(src); return u ? '<img class="' + (cls || "") + '" src="' + u + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest(\'[data-hide]\') ? this.closest(\'[data-hide]\').remove() : this.remove()">' : ""; }
+  function avatar(src, name, cls) {
+    var u = safeUrl(src), init = esc(String(name || "?").charAt(0).toUpperCase());
+    return u ? '<img class="av ' + (cls || "") + '" src="' + u + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML=\'<span class=&quot;av i&quot;>' + init + '</span>\'">' : '<span class="av i">' + init + "</span>";
+  }
+  function standout(p) { return (Number(p.outlier) || 0) >= 2 ? '<span class="standout">' + Math.round(p.outlier) + "x their usual</span>" : ""; }
+  function mediaGrid(list) {
+    list = (list || []).filter(function (m) { return safeUrl(m.url); }).slice(0, 4);
+    if (!list.length) return "";
+    return '<div class="media n' + list.length + '" data-hide>' + list.map(function (m) {
+      return '<div class="tile">' + img(m.url) + (m.type && m.type !== "photo" ? PLAY : "") + "</div>";
+    }).join("") + "</div>";
+  }
+
+  function xPost(p) {
+    var card = p.card && !p.media && (p.card.image || p.card.title)
+      ? '<div class="card" data-hide>' + img(p.card.image) + "<p>" + (p.card.title ? "<b>" + esc(p.card.title) + "</b>" : "") + (p.card.domain ? "From " + esc(p.card.domain) : "") + "</p></div>" : "";
+    var q = p.quote ? '<div class="quote"><div class="who">' + (p.quote.name ? "<b>" + esc(p.quote.name) + "</b>" : "") + (p.quote.handle ? "<span>@" + esc(p.quote.handle) + "</span>" : "") + "</div>" + (p.quote.text ? '<p class="text">' + esc(p.quote.text) + "</p>" : "") + mediaGrid(p.quote.media) + "</div>" : "";
+    return '<div class="row">' + avatar(p.avatar, p.name) + '<div class="grow">' +
+      '<div class="who"><b>' + esc(p.name) + "</b><span>@" + esc(p.handle) + '</span><span class="t">· ' + ago(p.postedAt) + '</span><span class="glyph">' + GLYPH.x + "</span></div>" +
+      (p.text ? '<p class="text">' + esc(p.text) + "</p>" : "") + mediaGrid(p.media) + card + q +
+      '<div class="stats"><span>' + icon(ICON.reply) + n(p.comments) + "</span><span>" + icon(ICON.repost) + n(p.reposts) + "</span><span>" + icon(ICON.like) + n(p.likes) + "</span><span>" + icon(ICON.views) + n(p.views) + "</span></div>" +
+      standout(p) + "</div></div>";
+  }
+  function ytPost(p) {
+    return (safeUrl(p.thumbnail) ? '<div class="thumb" data-hide>' + img(p.thumbnail) + PLAY + (p.duration ? '<span class="len">' + clock(p.duration) + "</span>" : "") + "</div>" : "") +
+      '<div class="yt">' + avatar(p.avatar, p.name) + '<div class="grow"><p class="title">' + esc(p.text || "Watch the video") + '</p><p class="meta">' + esc(p.name) + "<br>" + n(p.views) + " views · " + agoLong(p.postedAt) + "</p>" + standout(p) + '</div><span class="glyph">' + GLYPH.youtube + "</span></div>";
+  }
+  function igPost(p) {
+    return '<div class="ig-head">' + avatar(p.avatar, p.name) + "<b>" + esc(p.handle) + "</b><span>· " + ago(p.postedAt) + '</span><span class="glyph">' + GLYPH.instagram + "</span></div>" +
+      (safeUrl(p.image) ? '<div class="ig-img" data-hide>' + img(p.image) + (p.isVideo ? PLAY : "") + "</div>" : "") +
+      '<p class="ig-count">' + (p.views ? n(p.views) + " plays" : n(p.likes) + " likes") + "</p>" +
+      (p.text ? '<p class="ig-cap"><b>' + esc(p.handle) + "</b> " + esc(p.text) + "</p>" : "") + standout(p);
+  }
+
+  function render(f) {
+    var shown = posts.filter(function (p) { return f === "all" || p.platform === f; });
+    if (!shown.length) { feed.innerHTML = '<p class="empty">No posts here yet. The feed updates daily.</p>'; return; }
+    feed.innerHTML = shown.map(function (p) {
+      var body = p.platform === "youtube" ? ytPost(p) : p.platform === "instagram" ? igPost(p) : xPost(p);
+      var href = safeUrl(p.url);
+      return '<a class="post" href="' + href + '" target="_blank" rel="noopener noreferrer" aria-label="' + esc(p.name) + " on " + (LABEL[p.platform] || "") + '">' + body + "</a>";
+    }).join("") + '<p class="end">You\'re all caught up. The feed updates daily.</p>';
+  }
+
+  var tabs = [].slice.call(document.querySelectorAll("#tabs button"));
+  tabs.forEach(function (b) {
+    b.addEventListener("click", function () {
+      tabs.forEach(function (t) { t.setAttribute("aria-pressed", t === b ? "true" : "false"); });
+      render(b.dataset.f);
+      scrollTo(0, 0);
+    });
+  });
+  render("all");
+
+  // Copy a prompt, then show one line saying so, with the prompt behind "Show prompt". The pad
+  // runs in a sandboxed frame: when the clipboard API is refused, open the prompt and select it
+  // so the copy works by hand.
+  var box = document.getElementById("copied"), out = document.getElementById("copied-prompt"), msg = document.getElementById("copied-text");
+  var NOTE = { update: "Paste it into Claude Code to pull the newest posts.", change: "Paste it into Claude Code to add or remove creators." };
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var text = document.getElementById("prompt-" + btn.dataset.copy).content.textContent.trim();
+      out.textContent = text; msg.textContent = NOTE[btn.dataset.copy]; box.hidden = false; box.open = false;
+      function manual() {
+        box.open = true; box.querySelector(".check").textContent = "Copy this:";
+        var r = document.createRange(); r.selectNodeContents(out);
+        var sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+        if (ok) { box.querySelector(".check").textContent = "Copied."; sel.removeAllRanges(); box.open = false; }
+      }
+      box.querySelector(".check").textContent = "Copied.";
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(manual);
+      else manual();
+    });
+  });
+  box.addEventListener("toggle", function () { box.querySelector(".more").textContent = box.open ? "Hide prompt" : "Show prompt"; });
+})();
+</script>
+</body>
+</html>

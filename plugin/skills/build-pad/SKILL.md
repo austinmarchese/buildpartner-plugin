@@ -225,6 +225,7 @@ Some kinds of pad have a ready-made page layout. When the request matches one, r
 | Template | Use it for | Read |
 | --- | --- | --- |
 | Competitor Research | Comparing a business with its competitors: competitor research, "how do I stack up", a competitor watch | [references/templates/competitor-research.md](references/templates/competitor-research.md) |
+| Curated Feed | A feed of the newest posts from the creators the user follows on X, YouTube and Instagram: "build my curated feed", "update my Curated Feed", "change who's on my feed" | [references/templates/curated-feed.md](references/templates/curated-feed.md) |
 
 A pad built from a template carries the template's `<meta name="buildpad-template" ...>` tag, and the reviewer sees the template's name in the top bar. Keep the tag in every version.
 

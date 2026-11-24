@@ -134,7 +134,7 @@ test('Debug has a button per test state, and it sets the state for real', async 
   await member($, on)
   const ui = await $.ui.mount(BAND('desktop'))
   await ui.press({ key: 'expand' })
-  for (const key of ['first-run', 'suggestions', 'expert', 'tip', 'notices', 'audit', 'audit-done', 'everything', 'clear']) {
+  for (const key of ['first-run', 'suggestions', 'expert', 'tip', 'notices', 'audit', 'audit-done', 'starter-limit', 'everything', 'clear']) {
     expect(await ui.find({ type: 'Button', key: `ts-${key}` })).toBeDefined()
   }
   expect(await ui.find({ type: 'Text', text: /^In the mod$/ })).toBeDefined()
@@ -556,4 +556,51 @@ test('a suggestion dismissed in another window leaves this one within 10 seconds
   expect(await ui.find({ type: 'Button', key: 'card-apply-demo-skill' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /of 2/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('a Starter daily limit refused mid-session: "Today\'s limit reached" shows with the reset time, Upgrade to Pro opens Plans, Dismiss puts it away', async ($, on) => {
+  mock.store(on, { welcomed: true, scanned: true })
+  mock.env(on, { HOME: '/home/m' })
+  const clock = mock.clock(on)
+  const ran: string[][] = []
+  on('process.run', (_, e) => (ran.push([...e.argv]), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', () => ({ value: JSON.stringify({ token: 't', api_base: 'https://example.test' }) }))
+  on('http.fetch', (_, e) =>
+    e.url.endsWith('/api/buildpartner/mod/notices')
+      ? { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ notices: [] }) } }
+      : { value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } },
+  )
+  // The CLI's answer: the server's refusal as written (an older CLI passes it as { error }).
+  on('tool.call', () => ({ result: JSON.stringify({ error: "You've used today's 75 social lookups on Starter. They reset at midnight UTC. Pro has 500 a day for $49.99/mo: https://www.buildpartner.ai/dashboard/offers?from=plugin" }) }))
+  await $.session.start({ cwd: '/p', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1)
+  const ui = await $.ui.mount(BAND('desktop'))
+  // Nothing before a refusal: the row never sits there on its own.
+  expect(await ui.find({ type: 'Button', key: 'starter-pro-bar' })).toBeUndefined()
+  await $.tool.call({ tool: `mcp__plugin_${PLUGIN}_tools__social_intel`, action: 'profile', platform: 'x', target: 'acme' } as never)
+  await clock.advance(1)
+  expect((await ui.find({ type: 'Button', key: 'starter-pro-bar' }))?.text).toBe('Upgrade to Pro')
+  expect(await ui.find({ type: 'Text', text: /Today's limit reached/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Social lookups used up today\. Resets in \d+[hm]\. Upgrade to Pro to continue\./ })).toBeDefined()
+  await ui.press({ key: 'starter-pro-bar' })
+  await clock.advance(1)
+  expect(ran.some(a => a.some(x => x.includes('/dashboard/offers?from=mod')) && !a.some(x => x.includes('/checkout/')))).toBe(true)
+  await ui.press({ key: 'starter-limit-dismiss' })
+  expect(await ui.find({ type: 'Button', key: 'starter-pro-bar' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the "Today\'s limit reached" row is gone once midnight UTC passes', async ($, on) => {
+  const clock = await member($, on)
+  await state($, 'starter-limit')
+  const ui = await $.ui.mount(BAND('desktop'))
+  expect((await ui.find({ type: 'Button', key: 'starter-pro-bar' }))?.text).toBe('Upgrade to Pro')
+  await ui.unmount()
+  for (let h = 0; h < 25; h++) await clock.advance(3_600_000)
+  const after = await $.ui.mount(BAND('desktop'))
+  expect(await after.find({ type: 'Button', key: 'starter-pro-bar' })).toBeUndefined()
+  await after.unmount()
 })

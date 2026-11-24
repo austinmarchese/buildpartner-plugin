@@ -4,11 +4,12 @@ description: "Find what people are saying about a topic, product, brand or compe
 user-invocable: false
 allowed-tools:
   - mcp__plugin_bp-dev_tools__social_intel
+  - mcp__plugin_bp-dev_hosted__social_intel
 ---
 
 # What people are saying
 
-Use the `social_intel` tool with `action: "search"`. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_bp-dev_tools__social_intel`.
+Use the `social_intel` tool with `action: "search"`. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_bp-dev_tools__social_intel,mcp__plugin_bp-dev_hosted__social_intel`.
 
 1. Pick the platforms that fit: Reddit for honest reviews and comparisons, X for what's happening now, YouTube for reviews and tutorials, TikTok and Instagram for consumer trends, LinkedIn for B2B. Two or three is usually enough.
 2. `search` with short keywords on each. `sort: "latest"` for news on X and Reddit; `top` (default) for the most-engaged posts. X accepts operators like `min_faves:100` and `since:2026-11-01`.

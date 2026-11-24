@@ -1,6 +1,6 @@
 {
   "name": "bp-dev",
-  "version": "0.15.14-dev.20261117223812",
+  "version": "0.15.18-dev.20261124131209",
   "description": "Your AI build partner. Expert guidance, coaching, and personalized training inside Claude Code.",
   "author": {
     "name": "BuildPartner.ai"
@@ -28,9 +28,21 @@
       "args": [
         "--npx",
         "-y",
-        "buildpartner@0.15.14-dev.20261117223812",
+        "buildpartner@0.15.18-dev.20261124131209",
         "serve"
-      ]
+      ],
+      "env": {
+        "BP_HOSTED_URL": "https://dev.buildpartner.ai/api/mcp"
+      }
+    },
+    "hosted": {
+      "type": "http",
+      "url": "https://dev.buildpartner.ai/api/mcp",
+      "headersHelper": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/bp-auth-header\"",
+      "timeout": 300000,
+      "headers": {
+        "X-BuildPartner-Plugin": "1"
+      }
     }
   },
   "hooks": {
@@ -104,7 +116,7 @@
         ]
       },
       {
-        "matcher": "mcp__plugin_[^_]+_tools__.*",
+        "matcher": "mcp__plugin_[^_]+_tools__.*|mcp__plugin_(buildpartner|bp-dev)_hosted__(get_expert_knowledge|web_research|social_intel|get_founder_knowledge|request_founder_knowledge)",
         "hooks": [
           {
             "type": "command",
@@ -116,7 +128,7 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": "mcp__plugin_(buildpartner|bp-dev)_tools__.*",
+        "matcher": "mcp__plugin_(buildpartner|bp-dev)_tools__.*|mcp__plugin_(buildpartner|bp-dev)_hosted__(get_expert_knowledge|web_research|social_intel|get_founder_knowledge|request_founder_knowledge)",
         "hooks": [
           {
             "type": "command",

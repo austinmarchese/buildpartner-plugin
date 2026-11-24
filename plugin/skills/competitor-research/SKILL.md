@@ -4,11 +4,12 @@ description: "Look up what a company or competitor charges, offers and says on i
 user-invocable: false
 allowed-tools:
   - mcp__plugin_bp-dev_tools__web_research
+  - mcp__plugin_bp-dev_hosted__web_research
 ---
 
 # Competitor research
 
-Use the `web_research` tool. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_bp-dev_tools__web_research`.
+Use the `web_research` tool. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_bp-dev_tools__web_research,mcp__plugin_bp-dev_hosted__web_research`.
 
 1. Know the site? `scrape` the page (`acme.com/pricing`). Don't know the right page? `map` the site with `search: "pricing"` and scrape the top hit.
 2. Don't know the competitors? `search` first ("Loom alternatives"), then scrape each one's pricing page. Reading more than 5 pages: check `quota` first.

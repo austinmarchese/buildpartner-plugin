@@ -4,11 +4,12 @@ description: "Get the transcript of a YouTube video, YouTube Short, Instagram re
 user-invocable: false
 allowed-tools:
   - mcp__plugin_bp-dev_tools__social_intel
+  - mcp__plugin_bp-dev_hosted__social_intel
 ---
 
 # Video transcript
 
-Call the `social_intel` tool with `action: "transcript"`, the platform (`youtube`, `instagram`, `tiktok` or `linkedin`) and the full link as `target`. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_bp-dev_tools__social_intel`.
+Call the `social_intel` tool with `action: "transcript"`, the platform (`youtube`, `instagram`, `tiktok` or `linkedin`) and the full link as `target`. If it is listed by name only, load it first with ToolSearch, query `select:mcp__plugin_bp-dev_tools__social_intel,mcp__plugin_bp-dev_hosted__social_intel`.
 
 - Long transcripts come in pages: pass `next` as `cursor` for the rest (later pages are free). Fetch them all before summarizing the whole video.
 - Want the video's views, likes or description too? Call `post` with the same link.
