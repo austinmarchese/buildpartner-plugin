@@ -1,6 +1,6 @@
 ---
 description: "BuildPartner.ai: go through your Self-Improving System suggestions"
-argument-hint: "[suggestions]"
+argument-hint: "[suggestions | resume]"
 ---
 
 Show me my BuildPartner.ai Self-Improving System suggestions and go through them with me.

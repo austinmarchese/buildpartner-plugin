@@ -188,6 +188,7 @@ declare module 'claude-code' {
       upgradeSkipped: boolean
       starterLimit: Shaped<StarterLimit | null>
       audit: Shaped<AuditRun | null>
+      fixCheckin: Shaped<{ title: string } | null>
       rolloutOn: boolean
     }
   }

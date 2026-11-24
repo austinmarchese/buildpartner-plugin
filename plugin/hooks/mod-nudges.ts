@@ -363,7 +363,7 @@ export type ModGate = {
   /** Nudges and check-ins shown that day, together. */
   otherShown: number
 }
-export type GateEvent = { type: 'shown' | 'accepted' | 'dismissed'; kind: PromptKind } | { type: 'tick' }
+export type GateEvent = { type: 'shown' | 'accepted' | 'dismissed'; kind: PromptKind } | { type: 'tick' } | { type: 'resumed' }
 export type GateReport = 'mod_quiet_started' | 'mod_quiet_ended'
 
 export function newGate(day: string): ModGate {
@@ -371,16 +371,19 @@ export function newGate(day: string): ModGate {
 }
 
 /** A gate read back from storage: anything that is not a well-formed gate is a fresh active one, so a bad value never silences the mod. */
-export function readGate(raw: unknown, day: string): ModGate {
+export function readGate(raw: unknown, day: string, now?: number): ModGate {
   const g = raw && typeof raw === 'object' ? (raw as Partial<Record<keyof ModGate, unknown>>) : {}
   const count = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0
   const quiet = g.mode === 'quiet' && typeof g.quietUntil === 'number' && Number.isFinite(g.quietUntil)
   const ok = (g.mode === 'active' || quiet) && count(g.streak) && count(g.suggestionsShown) && count(g.otherShown) && typeof g.day === 'string'
   if (!ok) return newGate(day)
+  // A stored quiet can never run past one cooldown from now, so a bad or hand-edited date cannot silence the mod for a year.
+  const until = quiet ? (g.quietUntil as number) : null
+  const quietUntil = until !== null && now !== undefined ? Math.min(until, now + MOD_QUIET_COOLDOWN_MS) : until
   return {
     mode: quiet ? 'quiet' : 'active',
     streak: g.streak as number,
-    quietUntil: quiet ? (g.quietUntil as number) : null,
+    quietUntil,
     day: g.day as string,
     suggestionsShown: g.suggestionsShown as number,
     otherShown: g.otherShown as number,
@@ -400,6 +403,10 @@ function asOf(gate: ModGate, now: number, day: string): { gate: ModGate; ended: 
 }
 
 /** The one transition for the gate: an event in, the next gate and what to report out. Never mutates the gate it is given. */
+// Known limit: the stored gate is read, changed and written back by each window with no lock, so two windows acting within
+// milliseconds of each other can lose one update. Usually that is one count (one extra suggestion a day, or a streak one behind).
+// At worst it is a whole transition: a resume overwritten by a stale quiet gate stays paused until the old end (7 days at most)
+// and a second resume reports mod_quiet_ended again; a lost quiet start likewise reports mod_quiet_started twice. Accepted (#600).
 export function gateStep(gate: ModGate, ev: GateEvent, now: number, day: string): { gate: ModGate; report: GateReport[] } {
   const base = asOf(gate, now, day)
   let g = base.gate
@@ -409,6 +416,13 @@ export function gateStep(gate: ModGate, ev: GateEvent, now: number, day: string)
       break
     case 'shown':
       g = ev.kind === 'suggestion' ? { ...g, suggestionsShown: g.suggestionsShown + 1 } : { ...g, otherShown: g.otherShown + 1 }
+      break
+    case 'resumed':
+      // While active a resume changes nothing and reports nothing (asOf already reported a quiet that just ran out).
+      if (g.mode === 'quiet') {
+        report.push('mod_quiet_ended')
+        g = { ...g, mode: 'active', streak: 0, quietUntil: null }
+      }
       break
     case 'accepted':
       if (g.mode === 'quiet') report.push('mod_quiet_ended')
@@ -431,11 +445,12 @@ export function gateStep(gate: ModGate, ev: GateEvent, now: number, day: string)
  * The one line a member reads when they ask for suggestions and the gate is holding them back, or null when it is not.
  * Quiet: until when, and why. At the day's suggestion cap: that more show tomorrow. Never prompt text.
  */
-export function gateNote(gate: ModGate, now: number, day: string): string | null {
+export function gateNote(gate: ModGate, now: number, day: string, resumeCommand?: string): string | null {
   const g = asOf(gate, now, day).gate
   if (g.mode === 'quiet' && typeof g.quietUntil === 'number') {
     const until = new Date(g.quietUntil).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-    return `The mod is paused until ${until} after you turned down ${MOD_QUIET_STREAK} prompts in a row.`
+    const held = `The mod is paused until ${until} after you turned down ${MOD_QUIET_STREAK} prompts in a row.`
+    return resumeCommand ? `${held} Run ${resumeCommand} to turn suggestions back on now.` : held
   }
   if (g.suggestionsShown >= MOD_SUGGESTIONS_PER_DAY) return `The mod shows up to ${MOD_SUGGESTIONS_PER_DAY} new suggestions a day, and has shown them all for today.`
   return null

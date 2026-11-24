@@ -26,6 +26,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { accept, decide, dismiss as dismissNudgeState, gateNote, gateStep, mayShow, newState, nudgeEventBody, readGate, readPlanExtras } from './mod-nudges'
+import { AUDIT_FIX_CHECKIN, AUDIT_FIX_DISMISS, RETRY_PROMPT, fixTitleOf, pendingAfterSubmit, takePending } from './mod-checkin'
+import type { PendingFix } from './mod-checkin'
 import type { BpTool, GateEvent, ModGate, Nudge, NudgeEvent, NudgeKey, NudgeState, UsedTool } from './mod-nudges'
 import type { ReviewCursor, ExpertFlag, ToolTip, BarHealth, TeamNotice, MemberPlan, ReflectPattern, ReflectPatternType, ReflectRun, AuditRun, StarterLimit, WelcomeText } from '../types'
 
@@ -66,6 +68,8 @@ const expert = atom({ plugin: 'buildpartner', key: 'expert' } as const, null as 
 const toolTip = atom({ plugin: 'buildpartner', key: 'toolTip' } as const, null as ToolTip | null, { shape: 'tt-1' })
 // A mod nudge other than the expert question and the tool tips above (see mod-nudges.ts): the row it draws.
 const nudge = atom({ plugin: 'buildpartner', key: 'nudge' } as const, null as Nudge | null, { shape: 'nu-1' })
+// The "Did that fix work?" row after an AI Audit fix prompt (spec 692 Build 4): the finding's title, in memory, until answered.
+const fixCheckin = atom({ plugin: 'buildpartner', key: 'fixCheckin' } as const, null as { title: string } | null, { shape: 'fc-1' })
 // Bumped on the minute so "ago" figures redraw.
 const tick = atom({ plugin: 'buildpartner', key: 'tick' } as const, 0)
 // The BuildPartner.ai tools connected in this session, as `key:plugin` (see BP_TOOLS).
@@ -116,6 +120,8 @@ let active = true
 let lastSurface = ''
 // Changes the member pressed Apply on, waiting until they send the filled prompt.
 let pendingApplied: string[] = []
+// An AI Audit fix prompt was sent and its turn has not ended: one check-in at most per fix prompt (mod-checkin.ts).
+let pendingFix: PendingFix | null = null
 
 /** A read that fails soft: the band and the turn never break on one value. */
 async function attempt<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
@@ -1093,6 +1099,90 @@ async function useTip($: Dollar, prompt: string): Promise<void> {
   await creditTool($, () => handOver($, prompt, 'prepend'))
 }
 
+// ---- "Did that fix work?" after an AI Audit fix prompt (spec 692 Build 4) ----
+//
+// mod-checkin.ts holds the pure rules. A fix prompt sets pendingFix; the end of its turn shows the row once, through
+// the same gate as the nudges (kind 'checkin'). Yes marks the finding done on BuildPartner.ai and fills the next fix
+// prompt; Not quite fills a smaller retry; Not now puts it away. Nothing is ever sent for the member. The title stays
+// in memory and goes only to the member's own business-audit route. Only ids and outcomes are reported.
+
+/** A fix prompt was just sent (or any other prompt): remember the fix for the end of this turn, or forget the last one. Clears an unanswered row. */
+async function noteFixPrompt($: Dollar, text: string): Promise<void> {
+  await update($, fixCheckin, () => null)
+  const title = fixTitleOf(text)
+  if (title === null) {
+    pendingFix = null
+    return
+  }
+  const now = await $.clock.now()
+  const day = localDay(now)
+  const pending = pendingAfterSubmit(text, await loadGate($, day, now), now, day)
+  pendingFix = pending ? { title: pending.title, at: now } : null
+}
+
+/** The end of the member's turn: shows the check-in for the fix prompt that started it, once, if the gate allows. */
+async function showFixCheckin($: Dollar): Promise<void> {
+  const { taken, pending } = takePending(pendingFix, await $.clock.now())
+  pendingFix = pending
+  if (!taken) return
+  const s = await settings($)
+  if (!s.expertOn || !(await attempt(() => read($, isEnabled), true))) return
+  const { gate, now, day } = await tickGate($)
+  if (!mayShow(gate, 'checkin', now, day)) return
+  await update($, fixCheckin, () => ({ title: taken.title }))
+  await stepGate($, { type: 'shown', kind: 'checkin' })
+}
+
+/** Tells BuildPartner.ai the answer: ids and the outcome only, no title, no text. Fire and forget. */
+function reportFixAnswer($: Dollar, optionId: string): void {
+  void attempt(async () => {
+    const a = await auth($)
+    if (!a.token) return
+    await $.http.fetch(`${a.apiBase}/api/buildpartner/mod/checkins`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'checkin', nudge_key: AUDIT_FIX_CHECKIN.nudge_key, tool_id: AUDIT_FIX_CHECKIN.tool_id, question_id: AUDIT_FIX_CHECKIN.question_id, option_id: optionId }),
+    })
+  }, undefined)
+}
+
+/** Yes: marks the finding done on the results page (undoable there) and puts the next fix prompt in the box, or says there is none. */
+async function markFixedAndFillNext($: Dollar, title: string): Promise<void> {
+  const failed = `${NAME}: Could not mark it done. Try again from your results page.`
+  const a = await auth($)
+  if (!a.token) {
+    $.ui.toast(failed)
+    return
+  }
+  const r = await attempt(
+    () => $.http.fetch(`${a.apiBase}/api/buildpartner/business-audit`, { method: 'POST', headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fixed', title }) }),
+    null,
+  )
+  const j = r?.ok ? await attempt(async () => JSON.parse(r.text) as { ok?: unknown; next?: { prompt?: unknown } | null }, null) : null
+  if (!j || j.ok !== true) {
+    $.ui.toast(failed)
+    return
+  }
+  const nextPrompt = j.next && typeof j.next.prompt === 'string' ? j.next.prompt : ''
+  if (nextPrompt) await handOver($, nextPrompt, 'prepend')
+  else $.ui.toast(`${NAME}: That was the last open fix from your audit.`)
+}
+
+/** One answer to the row: Yes, Not quite or Not now. The row clears at once; the answer is reported whatever else happens. */
+async function answerFixCheckin($: Dollar, optionId: string): Promise<void> {
+  const row = await attempt(() => read($, fixCheckin), null)
+  if (!row) return
+  await update($, fixCheckin, () => null)
+  reportFixAnswer($, optionId)
+  if (optionId === AUDIT_FIX_DISMISS.option_id) {
+    await stepGate($, { type: 'dismissed', kind: 'checkin' })
+    return
+  }
+  await stepGate($, { type: 'accepted', kind: 'checkin' })
+  if (optionId === 'audit_fix_yes') await markFixedAndFillNext($, row.title)
+  else await handOver($, RETRY_PROMPT(row.title), 'prepend')
+}
+
 // ---- Health, dashboard, usage ping ----
 
 /** When BuildPartner.ai and the member's skills last changed, plus the facts the debug card shows. */
@@ -1360,45 +1450,62 @@ function localDay(ms: number): string {
 }
 
 /** The stored gate, or a fresh active one when it is missing or damaged (the mod never stays silent over its own storage). */
-async function loadGate($: Dollar, day: string): Promise<ModGate> {
-  return readGate(await attempt(() => $.store.get('modGate'), undefined), day)
+async function loadGate($: Dollar, day: string, now?: number): Promise<ModGate> {
+  return readGate(await attempt(() => $.store.get('modGate'), undefined), day, now)
 }
 
 /** Steps the stored gate with one event (a tick when none) and reports what started or ended. Returns the gate as stored. */
-async function stepGate($: Dollar, ev: GateEvent): Promise<{ gate: ModGate; now: number; day: string }> {
+async function stepGate($: Dollar, ev: GateEvent): Promise<{ gate: ModGate; now: number; day: string; wrote: boolean }> {
   const now = await $.clock.now()
   const day = localDay(now)
-  const before = await loadGate($, day)
+  const raw = await attempt(() => $.store.get('modGate'), undefined)
+  const before = readGate(raw, day, now)
   const out = gateStep(before, ev, now, day)
   let wrote = true
-  if (ev.type !== 'tick' || out.report.length > 0 || JSON.stringify(out.gate) !== JSON.stringify(before)) {
+  // Compare with the gate as stored (unclamped), so a tick writes a clamped quietUntil back once and the clamp does not slide.
+  if (ev.type !== 'tick' || out.report.length > 0 || JSON.stringify(out.gate) !== JSON.stringify(readGate(raw, day))) {
     wrote = await attempt(async () => { await $.store.set('modGate', out.gate); return true }, false)
   }
   // Report a start or an end only once it is stored: a store that keeps failing would otherwise send the same
   // mod_quiet_ended on every event and use up the member's event budget on the server.
   if (wrote) for (const kind of out.report) $.clock.after(0, () => void attempt(() => reportEvent($, kind), undefined))
-  return { gate: out.gate, now, day }
+  return { gate: out.gate, now, day, wrote }
 }
 
 /** The gate after a tick: quiet that ran out ends here, once, whichever window gets here first. */
-function tickGate($: Dollar): Promise<{ gate: ModGate; now: number; day: string }> {
+function tickGate($: Dollar): Promise<{ gate: ModGate; now: number; day: string; wrote: boolean }> {
   return stepGate($, { type: 'tick' })
 }
 
-/** True while the mod is quiet, for drawing: reads the gate, writes nothing. */
 /** gateNote for now, or null; never throws. */
 async function heldNote($: Dollar): Promise<string | null> {
   return attempt(async () => {
     const now = await $.clock.now()
     const day = localDay(now)
-    return gateNote(await loadGate($, day), now, day)
+    return gateNote(await loadGate($, day, now), now, day, `/${$.plugin.name}:plugin resume`)
   }, null)
 }
 
+/** True while the mod is quiet, for drawing: reads the gate, writes nothing. */
 async function isQuiet($: Dollar): Promise<boolean> {
   const now = await attempt(() => $.clock.now(), 0)
   const day = localDay(now)
-  return gateStep(await loadGate($, day), { type: 'tick' }, now, day).gate.mode === 'quiet'
+  return gateStep(await loadGate($, day, now), { type: 'tick' }, now, day).gate.mode === 'quiet'
+}
+
+/** What the member-opened suggestions card needs: whether the mod is paused and the line that says so. Kept out of the
+ *  CommandOutput handler so the handler stays a plain draw (mod-quiet-690c V4); R5 in mod-resume-700 checks the behaviour. */
+async function cardHold($: Dollar): Promise<{ paused: boolean; held: string | null }> {
+  const paused = await isQuiet($)
+  return { paused, held: paused ? await heldNote($) : null }
+}
+
+/** The member ends the pause themselves. Returns the one line to say: back on, or already on. */
+async function resume($: Dollar): Promise<string> {
+  const was = await isQuiet($)
+  const { wrote } = await stepGate($, { type: 'resumed' })
+  if (!was) return `${NAME}: suggestions are already on.`
+  return wrote ? `${NAME}: suggestions are back on.` : `${NAME}: suggestions could not be turned back on. Try again.`
 }
 
 // Notices reported as seen by this process; the server keeps one row per member per notice anyway.
@@ -2208,6 +2315,8 @@ type Row = {
   /** The terminal's one line, when the text needs the header to make sense. */
   plain?: string
   primary?: RowButton
+  /** A button between the primary and the quiet one (the "Did that fix work?" row has three answers). */
+  middle?: RowButton
   secondary?: RowButton
   /** Set when the row is one of the team's notices, so it is reported seen once drawn. */
   notice?: TeamNotice
@@ -2219,6 +2328,19 @@ function rowsAbove($: Dollar, v: View): Row[] {
   // An audit the member is running right now comes first: it is what they are watching.
   const run = auditRow($, v)
   if (run) rows.push(run)
+  // "Did that fix work?" after an AI Audit fix prompt: three answers, the one thing the member just did.
+  if (v.fixCheckin && v.enabled && v.expertOn) {
+    const [yes, notQuite] = AUDIT_FIX_CHECKIN.options
+    rows.push({
+      key: 'fix-checkin',
+      icon: 'bulb',
+      header: 'AI Audit',
+      text: AUDIT_FIX_CHECKIN.question,
+      primary: { key: 'fix-yes', label: yes.label, pressLabel: 'Fix worked: Yes', kind: 'bar', onPress: () => answerFixCheckin($, yes.option_id) },
+      middle: { key: 'fix-not-quite', label: notQuite.label, pressLabel: 'Fix worked: Not quite', kind: 'bar', onPress: () => answerFixCheckin($, notQuite.option_id) },
+      secondary: { key: 'fix-not-now', label: AUDIT_FIX_DISMISS.label, pressLabel: 'Fix worked: Not now', kind: 'bar', onPress: () => answerFixCheckin($, AUDIT_FIX_DISMISS.option_id) },
+    })
+  }
   const out = isOutOfRuns(v.plan)
   // Out of free runs, the expert question waits: the upgrade row is the one ask, and Ask the
   // expert would only lead to the same upgrade page. It shows again once the member has runs.
@@ -2383,12 +2505,13 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
           )}
         </Box>
         {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.pressLabel ?? r.primary.label, r.primary.onPress)} /> : ''}
+        {r.middle ? <Button key={r.middle.key} label={r.middle.label} onPress={click($, r.middle.kind, r.middle.pressLabel ?? r.middle.label, r.middle.onPress)} /> : ''}
         {r.secondary ? <Button key={r.secondary.key} plain label={r.secondary.label} onPress={click($, r.secondary.kind, r.secondary.pressLabel ?? r.secondary.label, r.secondary.onPress)} /> : ''}
         {next}
       </Box>
     )
   }
-  const buttons = (r.primary?.label.length ?? 0) + (r.secondary ? 6 : 0) + (r.n > 1 ? 7 : 0) + 8
+  const buttons = (r.primary?.label.length ?? 0) + (r.middle ? r.middle.label.length + 2 : 0) + (r.secondary ? 6 : 0) + (r.n > 1 ? 7 : 0) + 8
   return (
     <Box key={r.key} flexDirection="row" gap={1}>
       <Text color={CLAY}>{r.icon === 'play' ? '▶' : r.icon === 'sparkle' ? '✦' : '●'}</Text>
@@ -2397,6 +2520,7 @@ function drawRow($: Dollar, D: Elements, Svg: SvgEl | null, r: Row & { i: number
         <Text dimColor>{count}</Text>
       </Text>
       {r.primary ? <Button key={r.primary.key} label={r.primary.label} variant="primary" onPress={click($, r.primary.kind, r.primary.pressLabel ?? r.primary.label, r.primary.onPress)} /> : ''}
+      {r.middle ? <Button key={r.middle.key} label={r.middle.label} onPress={click($, r.middle.kind, r.middle.pressLabel ?? r.middle.label, r.middle.onPress)} /> : ''}
       {r.secondary ? <Button key={r.secondary.key} label="✕" onPress={click($, r.secondary.kind, r.secondary.pressLabel ?? r.secondary.label, r.secondary.onPress)} /> : ''}
       {next}
     </Box>
@@ -2474,6 +2598,8 @@ type View = {
   tip: ToolTip | null
   /** A mod nudge other than the expert question and the tool tips (mod-nudges.ts). */
   nudge: Nudge | null
+  /** The "Did that fix work?" row after an AI Audit fix prompt. */
+  fixCheckin: { title: string } | null
   /** Not now on the upgrade row, this session. */
   upgradeSkipped: boolean
   /** A Starter daily limit refused today, until it resets or is dismissed. */
@@ -2745,6 +2871,8 @@ export const register: Register = on => {
 
   // `remember: <rule>` goes straight to the suggestions. The prompt still goes to Claude.
   on('prompt.submit', async ($, e, next) => {
+    // Any submit, meta or command included, ends the last fix's turn: no stale check-in.
+    pendingFix = null
     // The member sent an Apply prompt: its changes hold in this session now, before any file is edited.
     const sent = pendingApplied.filter(c => e.text.includes(c))
     if (sent.length > 0) {
@@ -2756,6 +2884,8 @@ export const register: Register = on => {
       if (m?.[1]) await attempt(() => remember($, m[1] as string), undefined)
       // An AI Audit prompt: its row shows above the bar from the start. The prompt goes to Claude untouched.
       await attempt(() => startAudit($, e.text), undefined)
+      // An AI Audit fix prompt: the end of its turn asks once whether it worked. The prompt goes to Claude untouched.
+      await attempt(() => noteFixPrompt($, e.text), undefined)
       // Social links, competitor sites: the nudges read the words in memory and keep none of them.
       $.clock.after(0, () => void attempt(() => nudgeEvent($, { type: 'prompt.submit', text: e.text }), undefined))
     }
@@ -2791,6 +2921,7 @@ export const register: Register = on => {
     // Main loop only: a subagent's turns are not the member's conversation. All work runs after the turn.
     if (e.agentId === undefined && e.reason === 'answer') {
       $.clock.after(0, () => void attempt(() => afterTurn($), undefined))
+      $.clock.after(0, () => void attempt(() => showFixCheckin($), undefined))
     }
     return done
   })
@@ -2876,7 +3007,8 @@ export const register: Register = on => {
     try {
       const list = await read($, pending)
       const D = $.ui.resolve(e)
-      return suggestionsCard($, D, list, e.surface === 'desktop' && 'Svg' in D)
+      const { paused, held } = await cardHold($)
+      return suggestionsCard($, D, list, e.surface === 'desktop' && 'Svg' in D, paused, held)
     } catch {
       return next(e)
     }
@@ -2908,6 +3040,7 @@ export const register: Register = on => {
           ex: await attempt(() => read($, expert), null),
           tip: await attempt(() => read($, toolTip), null),
           nudge: await attempt(() => read($, nudge), null),
+          fixCheckin: await attempt(() => read($, fixCheckin), null),
           upgradeSkipped: await attempt(() => read($, upgradeSkipped), false),
           starterLimit: await attempt(() => read($, starterLimit), null),
           lastError: await attempt(() => read($, lastError), ''),
@@ -3041,6 +3174,7 @@ async function barCommand($: Dollar, e: { args: string }): Promise<{ text: strin
       // The row Claude reads; the card hook below draws it.
       return { text: list.length ? suggestionsMarkdown(list) : 'No pending Self-Improving System suggestions.' }
     }
+    if (verb === 'resume') return { text: await resume($) }
     if (verb === 'demo') {
       const map = await ledger($)
       if (arg === 'clear') {
@@ -3450,7 +3584,7 @@ function changeText(change: string): string {
   return t ? t[0].toUpperCase() + t.slice(1) : change
 }
 
-function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], pictures: boolean) {
+function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], pictures: boolean, paused = false, held: string | null = null) {
   const { Box, Text, Button } = D
   const Svg = pictures ? svgOf(D) : null
   return (
@@ -3462,7 +3596,18 @@ function suggestionsCard($: Dollar, D: Elements, list: ReflectPattern[], picture
           · Self-Improving System · {list.length === 0 ? 'all caught up' : `${list.length} ${list.length === 1 ? 'suggestion' : 'suggestions'}`}
         </Text>
       </Box>
-      {list.length === 0 ? <Text dimColor>Nothing waiting. New suggestions show up in the bar.</Text> : ''}
+      {paused ? (
+        <Box flexDirection="column" rowGap={1}>
+          {held ? <Text dimColor wrap="wrap">{held}</Text> : ''}
+          <Box flexDirection="row">
+            <Button key="card-resume" label="Resume suggestions" onPress={click($, 'bar', 'Resume suggestions', async () => $.ui.toast(await resume($)))} />
+          </Box>
+        </Box>
+      ) : list.length === 0 ? (
+        <Text dimColor>Nothing waiting. New suggestions show up in the bar.</Text>
+      ) : (
+        ''
+      )}
       {list.map(p => (
         <Box key={`s-${p.id}`} flexDirection="column" borderStyle="round" borderColor={LINE} paddingX={1}>
           <Text>

@@ -1,6 +1,7 @@
 import fs from "fs";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { BP_DIR, ensureDir } from "./_util.mjs";
+import { claudeCandidates, newestFirst, updateCommand } from "./update-plan.mjs";
 
 const THROTTLE_MS = 60 * 60 * 1000; // 1 hour
 const THROTTLE_FILE = `${BP_DIR}/last-update-check`;
@@ -27,33 +28,42 @@ try {
 
   // Spawn detached background update.
   //
-  // The team plugin is updated only when already installed (grep-gated), never
-  // added: adding it here would break the invariant that a non-org install
-  // stays byte-identical to today. Two team plugin ids exist, prod's
-  // buildpartner-team@buildpartner and dev's bp-dev-team@bp-dev; check and
-  // update each independently with the same grep-gate pattern so an enterprise
-  // dev machine's team plugin also gets refreshed by this hook.
+  // update-plan.mjs builds the command. Team and dev plugins are updated only
+  // when already installed (grep-gated), never added, so a non-org install
+  // stays byte-identical. Our steps are independent: a failing marketplace
+  // never skips the plugin update.
   //
-  // The dev plugin itself (bp-dev@bp-dev) is updated the same way, only when
-  // installed. Without it a dev machine stays on the build it was installed
-  // with until someone updates it by hand.
-  //
-  // `claude` is resolved here rather than trusted to be on PATH. A Claude Code
+  // `claude` is resolved rather than trusted to be on PATH. A Claude Code
   // started from the Claude Desktop app does not get the member's shell PATH,
-  // so a bare `claude` can be "command not found" even though it is running
-  // right now. Fall through the places the native installer and Homebrew put
-  // it. If none exists, do nothing: the hook must never fail a session.
-  const sh = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+  // and a Desktop-only Mac keeps its own copy under Application Support.
+  // update-plan.mjs lists those places. If none exists, do nothing: the hook
+  // must never fail a session.
   const home = process.env.HOME || "";
-  const candidates = [
-    `${home}/.local/bin/claude`,
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-  ].map(sh);
-  const resolve = `c=$(command -v claude 2>/dev/null); for p in ${candidates.join(" ")}; do [ -n "$c" ] || { [ -x "$p" ] && c="$p"; }; done; [ -n "$c" ] || exit 0;`;
-  const cmd =
-    resolve +
-    " \"$c\" plugin marketplace update 2>/dev/null && \"$c\" plugin update buildpartner@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'buildpartner-team@buildpartner' && \"$c\" plugin update buildpartner-team@buildpartner 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'bp-dev-team@bp-dev' && \"$c\" plugin update bp-dev-team@bp-dev 2>/dev/null; \"$c\" plugin list 2>/dev/null | grep -q 'bp-dev@bp-dev' && \"$c\" plugin update bp-dev@bp-dev 2>/dev/null";
+  let desktopVersions = [];
+  const desktopBuilds = {};
+  if (process.platform === "darwin") {
+    const root = `${home}/Library/Application Support/Claude/claude-code`;
+    try {
+      desktopVersions = fs.readdirSync(root);
+    } catch {
+      desktopVersions = [];
+    }
+    for (const v of newestFirst(desktopVersions)) {
+      try {
+        desktopBuilds[v] = fs.readdirSync(`${root}/${v}`);
+      } catch {
+        // No builds known for this version; only its legacy path is tried.
+      }
+    }
+  }
+  const cmd = updateCommand(
+    claudeCandidates({ home, platform: process.platform, desktopVersions, desktopBuilds }),
+  );
+  // Test seam: BP_UPDATE_WAIT=1 waits for the child so a test can read its log.
+  if (process.env.BP_UPDATE_WAIT === "1") {
+    spawnSync("sh", ["-c", cmd], { stdio: "ignore" });
+    process.exit(0);
+  }
   const child = spawn("sh", ["-c", cmd], {
     detached: true,
     stdio: "ignore",
