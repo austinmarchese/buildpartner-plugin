@@ -5,7 +5,7 @@
       "args": [
         "--npx",
         "-y",
-        "buildpartner@0.15.21",
+        "buildpartner@0.15.22",
         "serve"
       ],
       "env": {

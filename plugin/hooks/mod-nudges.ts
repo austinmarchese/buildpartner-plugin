@@ -28,7 +28,8 @@ export const COOLDOWN_MS: Record<NudgeKey, number> = {
   tip_social: 7 * DAY_MS,
   tip_pad: 7 * DAY_MS,
 }
-export const EXPERT_NOT_NOW_MS = DAY_MS
+/** How long "Not now" mutes the expert nudge (#920). The server dial (expertDialFrom) can change it per member. */
+export const EXPERT_NOT_NOW_MS = 7 * DAY_MS
 
 /** Nudges that share one cooldown: whichever showed last blocks the others. */
 const COOLDOWN_GROUPS: readonly (readonly NudgeKey[])[] = [['social_talk', 'tip_social']]
@@ -62,6 +63,10 @@ export type NudgeState = {
   domains: readonly string[]
   /** False when the last read of the member's plan failed: the audit date is then unknown, not missing. Unset reads as true. */
   planRead?: boolean
+  /** How long a shown expert card blocks the next one (ms). Unset reads as 0: no shown cooldown. From the server dial. */
+  expertCooldownMs?: number
+  /** How long Not now mutes the expert card (ms). Unset reads as EXPERT_NOT_NOW_MS. From the server dial. */
+  expertNotNowMs?: number
 }
 
 export type Nudge = { key: NudgeKey; line: string; button: string; command: string }
@@ -172,6 +177,35 @@ function planRejected(result: unknown): boolean {
   return /doesn'?t want to proceed|tool use was rejected|rejected|declined|interrupted by user/i.test(t)
 }
 
+// ---- The expert fit filter ----
+
+const MECHANICS_WORDS = [
+  'list item', 'button', 'component', 'file', 'folder', 'function', 'variable', 'refactor', 'css', 'layout', 'column', 'row',
+  'field', 'table', 'endpoint', 'api', 'database', 'schema', 'bug', 'error', 'commit', 'branch', 'deploy', 'rename', 'swap', 'swapping',
+  'reorder', 'padding', 'margin', 'font', 'colour', 'color', 'icon', 'modal', 'sidebar', 'dropdown', 'script', 'code', 'import', 'class',
+  'array', 'string',
+]
+const BUSINESS_WORDS = [
+  'price', 'pricing', 'prices', 'offer', 'launch', 'positioning', 'position', 'sales', 'sell', 'hire', 'hiring', 'customer', 'client', 'audience',
+  'market', 'revenue', 'funnel', 'newsletter', 'tier', 'plan', 'subscription', 'upsell', 'brand', 'cut', 'cohort', 'discount', 'guarantee',
+  'sponsor', 'partnership', 'headline', 'landing page', 'sales page', 'cta', 'thumbnail', 'subject line', 'rate', 'rates', 'charge', 'course',
+  'product', 'bundle', 'webinar', 'podcast', 'email sequence', 'waitlist', 'retainer', 'membership', 'coaching', 'consulting',
+]
+const wordList = (words: readonly string[], plural: string) => new RegExp(`\\b(?:${words.map(w => w.replace(' ', '\\s+')).join('|')})${plural}\\b`, 'i')
+const MECHANICS_RE = wordList(MECHANICS_WORDS, '')
+// A business word also matches with an optional s or es on its last word (offers, launches).
+const BUSINESS_RE = wordList(BUSINESS_WORDS, '(?:e?s)?')
+
+/**
+ * Whether a flagged decision is about the member's business. False when the topic and question read as code, UI or file
+ * mechanics and name no business subject; a business word anywhere wins. Empty topic and question: no fit.
+ */
+export function expertFits(topic: string | undefined, question: string | undefined): boolean {
+  const text = `${topic ?? ''}\n${question ?? ''}`
+  if (text.trim() === '') return false
+  return BUSINESS_RE.test(text) || !MECHANICS_RE.test(text)
+}
+
 // ---- Wording and commands ----
 
 type Copy = { line: string; button: string; skill: string }
@@ -234,8 +268,12 @@ function isEligible(state: NudgeState, key: NudgeKey, now: number): boolean {
   if (tool && (!state.connected.includes(tool) || state.usedTools.includes(tool))) return false
   if (key === 'audit_stale' && state.usedTools.includes('audit')) return false
   if (key === 'expert_decision') {
-    const at = state.dismissedAt.expert_decision
-    return !(typeof at === 'number' && now - at < EXPERT_NOT_NOW_MS)
+    const notNow = state.expertNotNowMs ?? EXPERT_NOT_NOW_MS
+    const cooldown = state.expertCooldownMs ?? 0
+    const dismissed = state.dismissedAt.expert_decision
+    const shown = state.shownAt.expert_decision
+    if (typeof dismissed === 'number' && now - dismissed < notNow) return false
+    return !(typeof shown === 'number' && now - shown < cooldown)
   }
   return !inCooldown(state, key, now)
 }
@@ -251,6 +289,7 @@ function triggers(event: NudgeEvent, state: NudgeState, now: number): { next: Nu
     case 'session.start':
       return { next: state, wants: state.planRead !== false && isStale(state.plan.lastAuditAt, now) ? [{ key: 'audit_stale' }] : [] }
     case 'decision':
+      if (!expertFits(event.topic, event.question)) return { next: state, wants: [] }
       return { next: state, wants: [{ key: 'expert_decision', extra: `${event.topic ?? ''}\n${event.question ?? ''}` }] }
     case 'prompt.submit': {
       const domains = [...state.domains]
@@ -318,6 +357,38 @@ export function readPlanExtras(json: unknown): { lastAuditAt: string | null; sit
   return {
     lastAuditAt: typeof o.last_audit_at === 'string' ? o.last_audit_at : null,
     siteHost: typeof o.site_host === 'string' ? o.site_host : null,
+  }
+}
+
+const EXPERT_COOLDOWN_DAYS = { min: 0, max: 30 }
+const EXPERT_NOT_NOW_DAYS = { min: 1, max: 30 }
+
+function dialDays(v: unknown, range: { min: number; max: number }): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= range.min && v <= range.max ? v : null
+}
+
+/**
+ * The expert dial from the whole GET /mod/rollout body: { expert: { cooldown_days, not_now_days } } as milliseconds for the
+ * state. Each field is checked on its own (cooldown 0..30 days, Not now 1..30); an absent or bad one takes the default.
+ */
+export function expertDialFrom(json: unknown): { expertCooldownMs: number; expertNotNowMs: number } {
+  const body = json && typeof json === 'object' ? (json as { expert?: unknown }) : {}
+  const e = body.expert && typeof body.expert === 'object' ? (body.expert as { cooldown_days?: unknown; not_now_days?: unknown }) : {}
+  const cooldown = dialDays(e.cooldown_days, EXPERT_COOLDOWN_DAYS)
+  const notNow = dialDays(e.not_now_days, EXPERT_NOT_NOW_DAYS)
+  return {
+    expertCooldownMs: cooldown === null ? 0 : cooldown * DAY_MS,
+    expertNotNowMs: notNow === null ? EXPERT_NOT_NOW_MS : notNow * DAY_MS,
+  }
+}
+
+/** The dial as stored by the plugin (milliseconds), read back: a field that is not a finite number in range takes the default. */
+export function expertDialFromStore(raw: unknown): { expertCooldownMs: number; expertNotNowMs: number } {
+  const o = raw && typeof raw === 'object' ? (raw as { expertCooldownMs?: unknown; expertNotNowMs?: unknown }) : {}
+  const ms = (v: unknown, range: { min: number; max: number }) => (dialDays(typeof v === 'number' ? v / DAY_MS : v, range) === null ? null : (v as number))
+  return {
+    expertCooldownMs: ms(o.expertCooldownMs, EXPERT_COOLDOWN_DAYS) ?? 0,
+    expertNotNowMs: ms(o.expertNotNowMs, EXPERT_NOT_NOW_DAYS) ?? EXPERT_NOT_NOW_MS,
   }
 }
 
