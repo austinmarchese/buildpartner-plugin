@@ -88,6 +88,12 @@ const scanDeclined = atom({ plugin: 'buildpartner', key: 'scanDeclined' } as con
 // The first-run look is reading past sessions right now.
 const isScanning = atom({ plugin: 'buildpartner', key: 'isScanning' } as const, false)
 const appliedNow = atom({ plugin: 'buildpartner', key: 'appliedNow' } as const, [] as string[], { shape: 'an-1' })
+// prompt.compose ran this session: the system-prompt route for approved lessons works. Where a plugin above
+// skips that hook it never runs, and prompt.submit attaches the lessons as context instead.
+let composeRan = false
+// The lessons last attached as context ('' none, or the conversation was compacted since): they ride again only when they change.
+let attachedLessons = ''
+const lessonsText = (list: string[]) => `Lessons the member approved in this session. Follow them now:\n${list.map(l => `- ${l}`).join('\n')}`
 // The member's plan, from BuildPartner.ai: null until read, or when it can't be.
 const plan = atom({ plugin: 'buildpartner', key: 'plan' } as const, null as MemberPlan | null, { shape: 'pl-1' })
 // Dev builds only: which made-up state the bar draws, '' for the real one.
@@ -2774,6 +2780,8 @@ export const register: Register = on => {
       const wasDeclined = (await $.store.get('scanDeclined')) === true
       await update($, scanDeclined, () => wasDeclined)
       await update($, appliedNow, () => [])
+      composeRan = false
+      attachedLessons = ''
       await update($, busySince, () => 0)
       const wasWelcomed = (await $.store.get('welcomed')) === true
       await update($, isWelcomed, () => wasWelcomed)
@@ -2893,12 +2901,24 @@ export const register: Register = on => {
       // Social links, competitor sites: the nudges read the words in memory and keep none of them.
       $.clock.after(0, () => void attempt(() => nudgeEvent($, { type: 'prompt.submit', text: e.text }), undefined))
     }
+    // Where prompt.compose is skipped, the lessons ride on the prompt as context, once per change.
+    // The Apply prompt carries it too: the system-prompt route covers that turn, so this matches it.
+    if (!composeRan) {
+      const list = await attempt(() => read($, appliedNow), [] as string[])
+      const text = lessonsText(list)
+      if (list.length > 0 && text !== attachedLessons) {
+        const done = await next({ ...e, context: [...(e.context ?? []), text] })
+        attachedLessons = text
+        return done
+      }
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 
   // Before a compaction folds the conversation away, review what has not been read yet. It reads
   // the messages now and reviews them in the background: the compaction never waits on the model.
   on('session.compact', async ($, e, next) => {
+    attachedLessons = ''
     if (e.agentId === undefined && active && (await isOn($)) && (await attempt(() => read($, isEnabled), false)) && (await attempt(async () => (await settings($)).selfOn, false))) {
       const msgs = await attempt(async () => (await $.session.messages()) as unknown as Msg[], null)
       if (msgs) $.clock.after(0, () => void attempt(() => review($, 'compact', undefined, msgs), ''))
@@ -2908,6 +2928,7 @@ export const register: Register = on => {
 
   // Lessons approved in this session hold at once, in this session's instructions.
   on('prompt.compose', async ($, e, next) => {
+    composeRan = true
     const done = await next(e)
     const list = await attempt(() => read($, appliedNow), [] as string[])
     if (list.length === 0) return done
@@ -2915,7 +2936,7 @@ export const register: Register = on => {
       ...done,
       sections: [
         ...done.sections,
-        { id: `${$.plugin.name}:approved-lessons`, text: `Lessons the member approved in this session. Follow them now:\n${list.map(l => `- ${l}`).join('\n')}`, scope: 'session' as const },
+        { id: `${$.plugin.name}:approved-lessons`, text: lessonsText(list), scope: 'session' as const },
       ],
     }
   }).catch(($, e, next) => next(e))
