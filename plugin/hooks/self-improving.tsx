@@ -1028,12 +1028,16 @@ async function nudgeState($: Dollar): Promise<NudgeState> {
 async function nudgeEvent($: Dollar, event: NudgeEvent): Promise<Nudge | null> {
   const s = await settings($)
   if (!s.expertOn || !(await attempt(() => read($, isEnabled), true))) return null
-  const { gate, now, day } = await tickGate($)
-  const out = decide(event, await nudgeState($), now, gate, day)
-  session = out.state
+  // The tick, the decision and the shown step are one lock section, so two prompts cannot both take the last slot.
+  const { out, now } = await withGateLock($, async () => {
+    const { gate, now, day } = await stepGateNow($, { type: 'tick' })
+    const out = decide(event, await nudgeState($), now, gate, day)
+    session = out.state
+    if (out.nudge) await stepGateNow($, { type: 'shown', kind: 'nudge' })
+    return { out, now }
+  })
   if (!out.nudge) return null
   const key = out.nudge.key
-  await stepGate($, { type: 'shown', kind: 'nudge' })
   await attempt(() => $.store.set('nudgesShown', out.state.shownAt), undefined)
   if (key === 'tip_web') await update($, toolTip, () => ({ key: 'web', at: now }))
   else if (key === 'tip_social') await update($, toolTip, () => ({ key: 'social', at: now }))
@@ -1130,10 +1134,15 @@ async function showFixCheckin($: Dollar): Promise<void> {
   if (!taken) return
   const s = await settings($)
   if (!s.expertOn || !(await attempt(() => read($, isEnabled), true))) return
-  const { gate, now, day } = await tickGate($)
-  if (!mayShow(gate, 'checkin', now, day)) return
-  await update($, fixCheckin, () => ({ title: taken.title }))
-  await stepGate($, { type: 'shown', kind: 'checkin' })
+  // The tick, the check and the shown step are one lock section, so two prompts cannot both take the last slot.
+  await withGateLock($, async () => {
+    const { gate, now, day } = await stepGateNow($, { type: 'tick' })
+    if (!mayShow(gate, 'checkin', now, day)) return false
+    // Draw the row first: if drawing fails, the slot is not spent.
+    await update($, fixCheckin, () => ({ title: taken.title }))
+    await stepGateNow($, { type: 'shown', kind: 'checkin' })
+    return true
+  })
 }
 
 /** Tells BuildPartner.ai the answer: ids and the outcome only, no title, no text. Fire and forget. */
@@ -1458,8 +1467,46 @@ async function loadGate($: Dollar, day: string, now?: number): Promise<ModGate> 
   return readGate(await attempt(() => $.store.get('modGate'), undefined), day, now)
 }
 
-/** Steps the stored gate with one event (a tick when none) and reports what started or ended. Returns the gate as stored. */
-async function stepGate($: Dollar, ev: GateEvent): Promise<{ gate: ModGate; now: number; day: string; wrote: boolean }> {
+type GateStepResult = { gate: ModGate; now: number; day: string; wrote: boolean }
+
+// Gate steps run one at a time, in call order, so a read-modify-write of modGate never overwrites another.
+// This covers one window; two windows can still race through the shared store (accepted, #600).
+let gateLock: Promise<unknown> = Promise.resolve()
+
+/** The longest one lock section holds the lock after its work started. A hung store call then stalls the window for 5 s, not for good. */
+const GATE_LOCK_HOLD_MS = 5000
+
+/**
+ * Runs work after every earlier lock holder is done. A rejection reaches its own caller and never blocks later ones.
+ * The lock is held until the work settles, or GATE_LOCK_HOLD_MS after the work started, whichever is first; a work
+ * released by the timer still finishes and answers its own caller. Never call it from inside work (it would wait on itself).
+ */
+function withGateLock<T>($: Dollar, work: () => Promise<T>): Promise<T> {
+  const previous = gateLock
+  let release: () => void = () => undefined
+  gateLock = new Promise<void>(resolve => { release = resolve })
+  return previous.then(() => {
+    // The timer starts here, when the work starts, so a long queue never releases a crowd at once.
+    let settled = false
+    const letNext = () => {
+      if (settled) return
+      settled = true
+      release()
+    }
+    $.clock.after(GATE_LOCK_HOLD_MS, letNext)
+    const run = work()
+    run.then(letNext, letNext)
+    return run
+  })
+}
+
+/** Steps the stored gate with one event, taking the lock. */
+function stepGate($: Dollar, ev: GateEvent): Promise<GateStepResult> {
+  return withGateLock($, () => stepGateNow($, ev))
+}
+
+/** Steps the stored gate with one event (a tick when none) and reports what started or ended. Returns the gate as stored. Only call it inside a lock section. */
+async function stepGateNow($: Dollar, ev: GateEvent): Promise<GateStepResult> {
   const now = await $.clock.now()
   const day = localDay(now)
   const raw = await attempt(() => $.store.get('modGate'), undefined)
@@ -1477,7 +1524,7 @@ async function stepGate($: Dollar, ev: GateEvent): Promise<{ gate: ModGate; now:
 }
 
 /** The gate after a tick: quiet that ran out ends here, once, whichever window gets here first. */
-function tickGate($: Dollar): Promise<{ gate: ModGate; now: number; day: string; wrote: boolean }> {
+function tickGate($: Dollar): Promise<GateStepResult> {
   return stepGate($, { type: 'tick' })
 }
 
